@@ -20,7 +20,7 @@ The repo ships two models: an **invariant** message-passing model (based on SchN
 
 | # | Notebook | What it covers |
 |---|----------|----------------|
-| 01 | `atoms_as_graphs.py` | Building a graph from an `Atoms` object; visualizing it |
+| 01 | `atoms_as_graphs.py` | Building a graph from an `Atoms` object; live cutoff slider with coupled 3D view and edge-distance histogram |
 | 02 | `message_passing.py` | A hand-traced forward pass through one interaction block |
 | 03 | `energy_and_forces.py` | Per-atom energies, sum readout, autograd forces |
 | 04 | `training_invariant.py` | Training the invariant model (SchNet-based) on rMD17 |
