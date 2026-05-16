@@ -25,16 +25,16 @@ RMD17_DIR = REPO_ROOT / "data" / "raw" / "rmd17"
 # (DOI 10.6084/m9.figshare.12672038). Regenerate manually from the figshare
 # API if URLs ever change.
 RMD17_FILES: dict[str, tuple[str, int]] = {
-    "aspirin":       ("https://ndownloader.figshare.com/files/62265757", 153_601_803),
-    "azobenzene":    ("https://ndownloader.figshare.com/files/62265754", 175_180_782),
-    "benzene":       ("https://ndownloader.figshare.com/files/62265739",  88_801_794),
-    "ethanol":       ("https://ndownloader.figshare.com/files/62265733",  67_201_791),
-    "malonaldehyde": ("https://ndownloader.figshare.com/files/62265736",  67_201_791),
-    "naphthalene":   ("https://ndownloader.figshare.com/files/62265751", 132_001_800),
-    "paracetamol":   ("https://ndownloader.figshare.com/files/62265760", 146_401_802),
-    "salicylic":     ("https://ndownloader.figshare.com/files/62265748", 117_601_798),
-    "toluene":       ("https://ndownloader.figshare.com/files/62265742", 110_401_797),
-    "uracil":        ("https://ndownloader.figshare.com/files/62265745",  88_801_794),
+    "aspirin": ("https://ndownloader.figshare.com/files/62265757", 153_601_803),
+    "azobenzene": ("https://ndownloader.figshare.com/files/62265754", 175_180_782),
+    "benzene": ("https://ndownloader.figshare.com/files/62265739", 88_801_794),
+    "ethanol": ("https://ndownloader.figshare.com/files/62265733", 67_201_791),
+    "malonaldehyde": ("https://ndownloader.figshare.com/files/62265736", 67_201_791),
+    "naphthalene": ("https://ndownloader.figshare.com/files/62265751", 132_001_800),
+    "paracetamol": ("https://ndownloader.figshare.com/files/62265760", 146_401_802),
+    "salicylic": ("https://ndownloader.figshare.com/files/62265748", 117_601_798),
+    "toluene": ("https://ndownloader.figshare.com/files/62265742", 110_401_797),
+    "uracil": ("https://ndownloader.figshare.com/files/62265745", 88_801_794),
 }
 SPLITS_URL = "https://ndownloader.figshare.com/files/62265763"
 SPLITS_SIZE = 28_478
@@ -46,9 +46,10 @@ def _stream_download(url: str, dest: Path, expected_size: int) -> None:
     req = urllib.request.Request(url, headers={"User-Agent": "tinymlip-downloader"})
     with urllib.request.urlopen(req) as response:
         total = int(response.headers.get("Content-Length", expected_size))
-        with open(dest, "wb") as f, tqdm(
-            total=total, unit="B", unit_scale=True, desc=dest.name
-        ) as bar:
+        with (
+            open(dest, "wb") as f,
+            tqdm(total=total, unit="B", unit_scale=True, desc=dest.name) as bar,
+        ):
             while chunk := response.read(1 << 16):
                 f.write(chunk)
                 bar.update(len(chunk))
@@ -105,14 +106,9 @@ def main() -> None:
         download_molecule(name, force=args.force)
     ensure_splits(force=args.force)
 
-    total_mb = sum(
-        (RMD17_DIR / f"rmd17_{n}.npz").stat().st_size for n in targets
-    ) // (1024 * 1024)
+    total_mb = sum((RMD17_DIR / f"rmd17_{n}.npz").stat().st_size for n in targets) // (1024 * 1024)
     rel = RMD17_DIR.relative_to(REPO_ROOT)
-    print(
-        f"Downloaded {len(targets)} molecule(s) ({total_mb} MB) to {rel}. "
-        "Splits present."
-    )
+    print(f"Downloaded {len(targets)} molecule(s) ({total_mb} MB) to {rel}. Splits present.")
 
 
 if __name__ == "__main__":

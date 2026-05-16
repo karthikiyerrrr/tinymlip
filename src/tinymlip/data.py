@@ -77,24 +77,20 @@ def load_rmd17(
     npz_path = data_root / f"rmd17_{molecule}.npz"
     if not npz_path.exists():
         cmd = f"uv run python data/download.py --dataset rmd17 --molecule {molecule}"
-        raise FileNotFoundError(
-            f"rmd17 {molecule} not found at {npz_path}. Run: {cmd}"
-        )
+        raise FileNotFoundError(f"rmd17 {molecule} not found at {npz_path}. Run: {cmd}")
 
     raw = np.load(npz_path)
     nuclear_charges = raw["nuclear_charges"]  # [n_atoms]
-    coords = raw["coords"]                    # [n_total, n_atoms, 3]
-    energies = raw["energies"]                # [n_total]
-    forces = raw["forces"]                    # [n_total, n_atoms, 3]
+    coords = raw["coords"]  # [n_total, n_atoms, 3]
+    energies = raw["energies"]  # [n_total]
+    forces = raw["forces"]  # [n_total, n_atoms, 3]
     n_atoms = int(coords.shape[1])
 
     if split == "all":
         train_idx = _load_split_indices(data_root, "train", cv_fold)
         test_idx = _load_split_indices(data_root, "test", cv_fold)
         indices = np.concatenate([train_idx, test_idx])
-        split_labels = np.array(
-            ["train"] * len(train_idx) + ["test"] * len(test_idx)
-        )
+        split_labels = np.array(["train"] * len(train_idx) + ["test"] * len(test_idx))
     else:
         indices = _load_split_indices(data_root, split, cv_fold)
         split_labels = np.array([split] * len(indices))
@@ -160,9 +156,7 @@ class _RMD17TorchDataset(Dataset):
         }
 
 
-def to_torch_dataset(
-    bundle: RMD17Bundle, *, dtype: torch.dtype = torch.float32
-) -> Dataset:
+def to_torch_dataset(bundle: RMD17Bundle, *, dtype: torch.dtype = torch.float32) -> Dataset:
     """Wrap an `RMD17Bundle` as a `torch.utils.data.Dataset`.
 
     The adapter does not re-read disk; it views the already-loaded bundle.

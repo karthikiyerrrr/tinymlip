@@ -36,22 +36,14 @@ def test_load_rmd17_split_test_selects_correct_indices(rmd17_mini_root: Path) ->
 
 
 def test_load_rmd17_n_frames_is_deterministic_under_seed(rmd17_mini_root: Path) -> None:
-    a = load_rmd17(
-        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
-    )
-    b = load_rmd17(
-        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
-    )
+    a = load_rmd17("aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root)
+    b = load_rmd17("aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root)
     assert a.meta["frame_idx"].to_list() == b.meta["frame_idx"].to_list()
 
 
 def test_load_rmd17_n_frames_differs_across_seeds(rmd17_mini_root: Path) -> None:
-    a = load_rmd17(
-        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
-    )
-    b = load_rmd17(
-        "aspirin", split="all", cv_fold=1, n_frames=3, seed=1, data_root=rmd17_mini_root
-    )
+    a = load_rmd17("aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root)
+    b = load_rmd17("aspirin", split="all", cv_fold=1, n_frames=3, seed=1, data_root=rmd17_mini_root)
     assert a.meta["frame_idx"].to_list() != b.meta["frame_idx"].to_list()
 
 
@@ -72,9 +64,7 @@ def test_load_rmd17_energy_and_forces_round_trip(rmd17_mini_root: Path) -> None:
         assert atoms.info["energy"] == pytest.approx(float(raw["energies"][frame_idx]))
         np.testing.assert_allclose(atoms.arrays["forces"], raw["forces"][frame_idx])
         assert atoms.arrays["forces"].shape == (len(atoms), 3)
-        assert bundle.meta["energy"][row_i] == pytest.approx(
-            float(raw["energies"][frame_idx])
-        )
+        assert bundle.meta["energy"][row_i] == pytest.approx(float(raw["energies"][frame_idx]))
 
 
 def test_load_rmd17_missing_file_raises_with_actionable_message(tmp_path: Path) -> None:
