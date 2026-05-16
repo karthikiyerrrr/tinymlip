@@ -230,3 +230,22 @@ def test_plot_edge_distance_histogram_returns_a_plotly_figure():
     # expose `.type`, not a dict-style .get()).
     shapes = fig.layout.shapes or ()
     assert any(getattr(s, "type", None) == "line" for s in shapes)
+
+
+def test_graph_stats_md_contains_size_and_degree_numbers():
+    from tinymlip.viz import graph_stats_md
+
+    atoms = Atoms(
+        numbers=[1, 6, 6, 8],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.4, 0.0, 0.0], [3.5, 0.0, 0.0]],
+    )
+    g = build_graph(atoms, cutoff=2.0)
+
+    text = graph_stats_md(g)
+
+    assert isinstance(text, str)
+    assert "|V|" in text
+    assert "|E|" in text
+    assert str(g.n_atoms) in text
+    assert str(g.n_edges) in text
+    assert "mean deg" in text

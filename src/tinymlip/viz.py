@@ -282,3 +282,30 @@ def plot_edge_distance_histogram(
         bargap=0.05,
     )
     return fig
+
+
+def graph_stats_md(graph: AtomGraph) -> str:
+    """One-line markdown summary of graph size and per-atom degree.
+
+    Example: `**|V|** = 21   **|E|** = 84   **mean deg** = 4.00   **max** = 7   **min** = 2`.
+    """
+    n = graph.n_atoms
+    e = graph.n_edges
+    if e == 0:
+        mean_deg = 0.0
+        max_deg = 0
+        min_deg = 0
+    else:
+        degree = torch.zeros(n, dtype=torch.long)
+        degree.scatter_add_(0, graph.edge_index[0], torch.ones(e, dtype=torch.long))
+        mean_deg = float(degree.float().mean())
+        max_deg = int(degree.max())
+        min_deg = int(degree.min())
+
+    return (
+        f"**|V|** = {n}   "
+        f"**|E|** = {e}   "
+        f"**mean deg** = {mean_deg:.2f}   "
+        f"**max** = {max_deg}   "
+        f"**min** = {min_deg}"
+    )
