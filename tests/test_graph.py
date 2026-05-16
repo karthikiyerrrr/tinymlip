@@ -157,3 +157,15 @@ def test_graph_relabels_under_permutation():
     e2 = {tuple(e) for e in g2.edge_index.t().tolist()}
     expected = {(int(inverse[i]), int(inverse[j])) for (i, j) in e1}
     assert expected == e2
+
+
+def test_build_graph_rejects_periodic_systems_with_clear_message():
+    atoms = Atoms(
+        numbers=[6, 6],
+        positions=[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]],
+        cell=[10.0, 10.0, 10.0],
+        pbc=[True, True, True],
+    )
+
+    with pytest.raises(NotImplementedError, match="notebook 06"):
+        build_graph(atoms, cutoff=5.0)
