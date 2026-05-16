@@ -1,0 +1,10 @@
+# Claude
+.claude/
+CLAUDE.md
+docs/superpowers/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
