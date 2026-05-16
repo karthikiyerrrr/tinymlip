@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use this educational repository, please cite it as below, and cite the underlying papers it teaches."
+title: tinymlip
+abstract: "An educational implementation of Machine Learning Interatomic Potentials (MLIPs), built up across marimo notebooks from atoms-as-graphs to invariant and equivariant message passing."
+type: software
+authors:
+  - family-names: Iyer
+    given-names: Karthik
+repository-code: "https://github.com/kbi102003/tinymlip"
+license: MIT
+version: 0.0.1
+references:
+  - type: article
+    authors:
+      - family-names: Behler
+        given-names: Jörg
+      - family-names: Parrinello
+        given-names: Michele
+    title: "Generalized Neural-Network Representation of High-Dimensional Potential-Energy Surfaces"
+    journal: "Physical Review Letters"
+    volume: 98
+    issue: 14
+    start: 146401
+    year: 2007
+    doi: 10.1103/PhysRevLett.98.146401
