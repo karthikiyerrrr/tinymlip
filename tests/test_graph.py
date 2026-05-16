@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import dataclasses
 
+import numpy as np
 import pytest
 import torch
 from ase import Atoms
 
-from tinymlip.graph import AtomGraph, _neighbor_list_torch
+from tinymlip.graph import AtomGraph, _neighbor_list_torch, build_graph
 
 
 def test_atomgraph_holds_documented_fields():
@@ -86,8 +87,6 @@ def test_neighbor_list_widens_with_cutoff():
 
 
 def test_build_graph_returns_documented_shapes_and_dtypes():
-    from tinymlip.graph import build_graph
-
     # 4-atom toy: H, C, C, H along x.
     atoms = Atoms(
         numbers=[1, 6, 6, 1],
@@ -112,3 +111,49 @@ def test_build_graph_returns_documented_shapes_and_dtypes():
     assert g.cutoff == 2.0
     assert g.cell is None
     assert g.pbc == (False, False, False)
+
+
+def test_graph_is_translation_invariant():
+    atoms = Atoms(
+        numbers=[1, 6, 6, 8],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.2, 0.0], [2.4, 0.1, 0.3], [3.5, 0.0, 0.0]],
+    )
+    g1 = build_graph(atoms, cutoff=2.0)
+
+    shifted = atoms.copy()
+    shifted.translate([10.0, -3.0, 7.0])
+    g2 = build_graph(shifted, cutoff=2.0)
+
+    e1 = {tuple(e) for e in g1.edge_index.t().tolist()}
+    e2 = {tuple(e) for e in g2.edge_index.t().tolist()}
+    assert e1 == e2
+
+    d1, _ = g1.edge_dist.sort()
+    d2, _ = g2.edge_dist.sort()
+    assert torch.allclose(d1, d2)
+
+
+def test_graph_relabels_under_permutation():
+    atoms = Atoms(
+        numbers=[1, 6, 6, 8],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.2, 0.0], [2.4, 0.1, 0.3], [3.5, 0.0, 0.0]],
+    )
+    g1 = build_graph(atoms, cutoff=2.0)
+
+    rng = np.random.default_rng(0)
+    perm = rng.permutation(len(atoms))  # array, e.g. [2, 0, 3, 1]
+    inverse = np.argsort(perm)
+
+    shuffled = Atoms(
+        numbers=atoms.numbers[perm],
+        positions=atoms.positions[perm],
+    )
+    g2 = build_graph(shuffled, cutoff=2.0)
+
+    # For every (i, j) in g1, the edge (inverse-relabel(i), inverse-relabel(j))
+    # should exist in g2 because shuffled[k] == original[perm[k]],
+    # so original index `i` maps to shuffled index `inverse[i]`.
+    e1 = {tuple(e) for e in g1.edge_index.t().tolist()}
+    e2 = {tuple(e) for e in g2.edge_index.t().tolist()}
+    expected = {(int(inverse[i]), int(inverse[j])) for (i, j) in e1}
+    assert expected == e2
