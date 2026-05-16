@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from tinymlip.data import load_rmd17
@@ -59,3 +60,17 @@ def test_load_rmd17_n_frames_caps_at_available(rmd17_mini_root: Path) -> None:
         "aspirin", split="train", cv_fold=1, n_frames=999, data_root=rmd17_mini_root
     )
     assert len(bundle.meta) == 3
+
+
+def test_load_rmd17_energy_and_forces_round_trip(rmd17_mini_root: Path) -> None:
+    bundle = load_rmd17("aspirin", split="all", cv_fold=1, data_root=rmd17_mini_root)
+    raw = np.load(rmd17_mini_root / "rmd17_aspirin.npz")
+
+    for row_i, atoms in enumerate(bundle.structures):
+        frame_idx = bundle.meta["frame_idx"][row_i]
+        assert atoms.info["energy"] == pytest.approx(float(raw["energies"][frame_idx]))
+        np.testing.assert_allclose(atoms.arrays["forces"], raw["forces"][frame_idx])
+        assert atoms.arrays["forces"].shape == (len(atoms), 3)
+        assert bundle.meta["energy"][row_i] == pytest.approx(
+            float(raw["energies"][frame_idx])
+        )
