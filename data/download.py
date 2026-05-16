@@ -77,9 +77,9 @@ def ensure_splits(*, force: bool = False) -> None:
         return
     zip_path = RMD17_DIR / "splits.zip"
     _stream_download(SPLITS_URL, zip_path, SPLITS_SIZE)
-    splits_dir.mkdir(exist_ok=True)
-    # The zip contains a top-level "splits/" directory, so we extract to
-    # RMD17_DIR so the inner folder lands at RMD17_DIR/splits/*.csv.
+    # The zip contains a top-level "splits/" directory, so extracting into
+    # RMD17_DIR lands the CSVs at RMD17_DIR/splits/*.csv. extractall creates
+    # the directory; no explicit mkdir needed.
     with zipfile.ZipFile(zip_path) as zf:
         zf.extractall(RMD17_DIR)
     zip_path.unlink()

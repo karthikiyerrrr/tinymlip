@@ -41,7 +41,8 @@ def _default_data_root() -> Path:
 
 def _load_split_indices(data_root: Path, split: str, cv_fold: int) -> np.ndarray:
     """Read an rMD17 official CV split CSV from disk."""
-    csv_path = data_root / "splits" / f"index_{split}_0{cv_fold}.csv"
+    assert 1 <= cv_fold <= 5, f"cv_fold must be in 1..5, got {cv_fold}"
+    csv_path = data_root / "splits" / f"index_{split}_{cv_fold:02d}.csv"
     return np.loadtxt(csv_path, dtype=np.int64, ndmin=1)
 
 
