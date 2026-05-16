@@ -48,6 +48,11 @@ ignore = ["E501"]
 [tool.ruff.lint.isort]
 known-first-party = ["tinymlip"]
 
+[tool.ruff.lint.per-file-ignores]
+# Marimo notebooks use a trailing bare expression as the cell's displayed
+# output — this is the idiomatic way to surface a value in marimo, not a bug.
+"notebooks/*.py" = ["B018"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

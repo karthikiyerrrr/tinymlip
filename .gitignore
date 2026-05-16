@@ -9,3 +9,6 @@ __pycache__/
 .venv/
 
 .superpowers/
+
+# marimo per-notebook session cache (auto-created next to the .py file)
+__marimo__/
