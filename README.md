@@ -56,10 +56,17 @@ uv sync
 
 `uv sync` reads `.python-version` (pinned to 3.11), provisions a matching interpreter if needed, creates a virtual environment, and installs the package in editable mode along with all dependencies.
 
-Pull the small starter dataset:
+Pull a starter molecule from rMD17 (≈150 MB, one-time download):
 
 ```bash
-uv run python data/download.py --dataset rmd17 --molecule aspirin --n-frames 1000
+uv run python data/download.py --dataset rmd17 --molecule aspirin
+```
+
+Frame subsetting happens at load time, not download time — pass `n_frames=` to the loader in a notebook:
+
+```python
+from tinymlip.data import load_rmd17
+bundle = load_rmd17("aspirin", split="train", cv_fold=1, n_frames=1000)
 ```
 
 Open the first notebook:
