@@ -48,15 +48,6 @@ def _(mo):
     return (cutoff,)
 
 
-@app.cell
-def _(atoms, cutoff):
-    from tinymlip import build_graph
-
-    graph = build_graph(atoms, cutoff=cutoff.value)
-    graph
-    return (graph,)
-
-
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -70,8 +61,10 @@ def _(mo):
 
 
 @app.cell
-def _(graph, mo):
-    from tinymlip import plot_edge_distance_histogram, plot_graph_3d
+def _(atoms, cutoff, mo):
+    from tinymlip import build_graph, plot_edge_distance_histogram, plot_graph_3d
+
+    graph = build_graph(atoms, cutoff=cutoff.value)
 
     mo.hstack(
         [
@@ -80,7 +73,7 @@ def _(graph, mo):
         ],
         widths=[1, 1],
     )
-    return
+    return (graph,)
 
 
 @app.cell
