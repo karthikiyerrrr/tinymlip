@@ -7,7 +7,7 @@ import dataclasses
 import pytest
 import torch
 
-from tinymlip.graph import AtomGraph
+from tinymlip.graph import AtomGraph, _neighbor_list_torch
 
 
 def test_atomgraph_holds_documented_fields():
@@ -46,3 +46,39 @@ def test_atomgraph_holds_documented_fields():
     # frozen=True: mutating a field must raise
     with pytest.raises(dataclasses.FrozenInstanceError):
         g.cutoff = 3.0  # type: ignore[misc]
+
+
+def test_neighbor_list_honors_cutoff_and_excludes_self_loops():
+    # Atoms on a line at x = 0, 1, 2, 5 (Y=Z=0).
+    pos = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        dtype=torch.float32,
+    )
+
+    edge_index, edge_vec, edge_dist = _neighbor_list_torch(pos, cutoff=1.5)
+
+    # Within 1.5 Å: (0,1), (1,0), (1,2), (2,1). Nothing touching atom 3.
+    edges = {tuple(e) for e in edge_index.t().tolist()}
+    assert edges == {(0, 1), (1, 0), (1, 2), (2, 1)}
+
+    # No self-loops.
+    for i, j in edges:
+        assert i != j
+
+    # edge_vec[k] = pos[dst] - pos[src]; ||edge_vec|| matches edge_dist.
+    assert torch.allclose(edge_dist, edge_vec.norm(dim=-1))
+
+
+def test_neighbor_list_widens_with_cutoff():
+    pos = torch.tensor(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0], [5.0, 0.0, 0.0]],
+        dtype=torch.float32,
+    )
+
+    edge_index, _, _ = _neighbor_list_torch(pos, cutoff=2.5)
+    edges = {tuple(e) for e in edge_index.t().tolist()}
+
+    # 2.5 Å now includes (0,2) and (2,0); atom 3 is still 3 Å away from
+    # the nearest neighbor and stays isolated.
+    assert (0, 2) in edges and (2, 0) in edges
+    assert all(3 not in pair for pair in edges)

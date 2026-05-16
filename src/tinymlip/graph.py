@@ -45,3 +45,33 @@ class AtomGraph:
     @property
     def n_edges(self) -> int:
         return int(self.edge_index.shape[1])
+
+
+def _neighbor_list_torch(
+    pos: torch.Tensor,
+    cutoff: float,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pairs within `cutoff`, both directions, no self-loops.
+
+    Hand-written torch-only neighbor list. Computed via pairwise distance
+    matrix; O(N²) but negligible for small molecules (N ≤ 21 on rMD17).
+
+    Args:
+        pos: [N, 3] float — atomic positions in Angstroms.
+        cutoff: float — distance cutoff in Angstroms.
+
+    Returns:
+        edge_index: [2, E] long — (src, dst) pairs, directed both ways.
+        edge_vec: [E, 3] float — pos[dst] - pos[src].
+        edge_dist: [E] float — Euclidean distance for each edge.
+    """
+    # pos.unsqueeze(0): [1, N, 3] ; pos.unsqueeze(1): [N, 1, 3].
+    # diff[i, j, :] = pos[j] - pos[i], so diff[src, dst] = pos[dst] - pos[src].
+    diff = pos.unsqueeze(0) - pos.unsqueeze(1)  # [N, N, 3]
+    dist = diff.norm(dim=-1)  # [N, N]
+    mask = (dist > 0) & (dist <= cutoff)  # excludes the diagonal (i == j)
+    src, dst = mask.nonzero(as_tuple=True)
+    edge_index = torch.stack([src, dst])  # [2, E]
+    edge_vec = diff[src, dst]  # [E, 3]
+    edge_dist = dist[src, dst]  # [E]
+    return edge_index, edge_vec, edge_dist
