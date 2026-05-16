@@ -192,6 +192,7 @@ def plot_graph_3d(
             "yaxis_title": "y (Å)",
             "zaxis_title": "z (Å)",
             "aspectmode": "data",
+            "dragmode": "turntable",
         },
         showlegend=True,
     )
