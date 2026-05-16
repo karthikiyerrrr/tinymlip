@@ -19,6 +19,8 @@ from typing import Literal
 import ase
 import numpy as np
 import polars as pl
+import torch
+from torch.utils.data import Dataset
 
 
 @dataclass(frozen=True)
@@ -122,3 +124,47 @@ def load_rmd17(
         structures.append(atoms)
 
     return RMD17Bundle(meta=meta, structures=structures)
+
+
+class _RMD17TorchDataset(Dataset):
+    """Adapter exposing an `RMD17Bundle` as a torch Dataset.
+
+    Each `__getitem__` returns a dict of tensors:
+        - z:         LongTensor[n_atoms] — atomic numbers
+        - pos:       FloatTensor[n_atoms, 3] — positions
+        - energy:    FloatTensor[] — scalar energy
+        - forces:    FloatTensor[n_atoms, 3]
+        - frame_idx: LongTensor[] — index into the original rMD17 npz
+
+    No batching is done here; notebooks define their own `collate_fn` once
+    `graph.py` exists.
+    """
+
+    def __init__(self, bundle: RMD17Bundle, dtype: torch.dtype = torch.float32) -> None:
+        self._bundle = bundle
+        self._dtype = dtype
+
+    def __len__(self) -> int:
+        return len(self._bundle.structures)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        atoms = self._bundle.structures[idx]
+        frame_idx = int(self._bundle.meta["frame_idx"][idx])
+        energy = float(self._bundle.meta["energy"][idx])
+        return {
+            "z": torch.as_tensor(atoms.numbers, dtype=torch.long),
+            "pos": torch.as_tensor(atoms.positions, dtype=self._dtype),
+            "energy": torch.tensor(energy, dtype=self._dtype),
+            "forces": torch.as_tensor(atoms.arrays["forces"], dtype=self._dtype),
+            "frame_idx": torch.tensor(frame_idx, dtype=torch.long),
+        }
+
+
+def to_torch_dataset(
+    bundle: RMD17Bundle, *, dtype: torch.dtype = torch.float32
+) -> Dataset:
+    """Wrap an `RMD17Bundle` as a `torch.utils.data.Dataset`.
+
+    The adapter does not re-read disk; it views the already-loaded bundle.
+    """
+    return _RMD17TorchDataset(bundle, dtype=dtype)

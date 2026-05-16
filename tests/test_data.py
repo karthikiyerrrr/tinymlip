@@ -6,8 +6,9 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
-from tinymlip.data import load_rmd17
+from tinymlip.data import load_rmd17, to_torch_dataset
 
 
 def test_load_rmd17_returns_paired_meta_and_structures(rmd17_mini_root: Path) -> None:
@@ -83,3 +84,29 @@ def test_load_rmd17_missing_file_raises_with_actionable_message(tmp_path: Path) 
     msg = str(excinfo.value)
     assert "data/download.py --dataset rmd17 --molecule aspirin" in msg
     assert "rmd17_aspirin.npz" in msg
+
+
+def test_to_torch_dataset_shapes_and_dtypes(rmd17_mini_root: Path) -> None:
+    bundle = load_rmd17("aspirin", split="all", cv_fold=1, data_root=rmd17_mini_root)
+    ds = to_torch_dataset(bundle)
+
+    assert len(ds) == len(bundle.meta)
+
+    sample = ds[0]
+    n_atoms = int(bundle.meta["n_atoms"][0])
+
+    assert sample["z"].dtype == torch.long
+    assert sample["z"].shape == (n_atoms,)
+
+    assert sample["pos"].dtype == torch.float32
+    assert sample["pos"].shape == (n_atoms, 3)
+
+    assert sample["energy"].dtype == torch.float32
+    assert sample["energy"].shape == ()
+
+    assert sample["forces"].dtype == torch.float32
+    assert sample["forces"].shape == (n_atoms, 3)
+
+    assert sample["frame_idx"].dtype == torch.long
+    assert sample["frame_idx"].shape == ()
+    assert int(sample["frame_idx"]) == int(bundle.meta["frame_idx"][0])
