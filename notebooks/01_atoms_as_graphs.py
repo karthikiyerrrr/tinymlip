@@ -33,7 +33,7 @@ def _(mo):
 
 @app.cell
 def _():
-    from tinymlip.data import load_rmd17
+    from tinymlip import load_rmd17
 
     bundle = load_rmd17("ethanol", split="train", n_frames=1, seed=0)
     atoms = bundle.structures[0]

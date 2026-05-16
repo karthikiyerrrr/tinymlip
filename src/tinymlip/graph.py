@@ -28,6 +28,9 @@ class AtomGraph:
     layers can read it directly. Models that need autograd-correct forces must
     recompute `edge_vec` from `pos` inside their forward pass — `pos` must be
     the autograd leaf, not `edge_vec`. See models.py when it lands.
+
+    A `.to_pyg()` adapter (returns `torch_geometric.data.Data`) is deferred to
+    notebook 04, when batched training is introduced.
     """
 
     z: torch.Tensor  # [N]    long       — atomic numbers

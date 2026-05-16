@@ -118,7 +118,9 @@ def plot_graph_3d(
     `show_edges`) are dashed teal lines drawn for every directed edge in
     `graph.edge_index` — we draw each undirected pair once.
 
-    Hover on an atom shows its index, element symbol, and degree.
+    Hover on an atom shows its index, element symbol, and degree. Cross-panel
+    hover linking (hover an atom → highlight a bar in the distance histogram)
+    is deferred; plotly supports it via `customdata` + `hovertemplate`.
     """
     pos_np = graph.pos.detach().cpu().numpy()
     z_np = graph.z.detach().cpu().numpy()
