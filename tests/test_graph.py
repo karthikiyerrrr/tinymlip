@@ -6,6 +6,7 @@ import dataclasses
 
 import pytest
 import torch
+from ase import Atoms
 
 from tinymlip.graph import AtomGraph, _neighbor_list_torch
 
@@ -82,3 +83,32 @@ def test_neighbor_list_widens_with_cutoff():
     # the nearest neighbor and stays isolated.
     assert (0, 2) in edges and (2, 0) in edges
     assert all(3 not in pair for pair in edges)
+
+
+def test_build_graph_returns_documented_shapes_and_dtypes():
+    from tinymlip.graph import build_graph
+
+    # 4-atom toy: H, C, C, H along x.
+    atoms = Atoms(
+        numbers=[1, 6, 6, 1],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.6, 0.0, 0.0], [3.7, 0.0, 0.0]],
+    )
+
+    g = build_graph(atoms, cutoff=2.0)
+
+    assert g.z.dtype == torch.long
+    assert g.pos.dtype == torch.float32
+    assert g.edge_index.dtype == torch.long
+    assert g.edge_vec.dtype == torch.float32
+    assert g.edge_dist.dtype == torch.float32
+
+    assert g.z.shape == (4,)
+    assert g.pos.shape == (4, 3)
+    assert g.edge_index.shape[0] == 2
+    e = g.edge_index.shape[1]
+    assert g.edge_vec.shape == (e, 3)
+    assert g.edge_dist.shape == (e,)
+
+    assert g.cutoff == 2.0
+    assert g.cell is None
+    assert g.pbc == (False, False, False)

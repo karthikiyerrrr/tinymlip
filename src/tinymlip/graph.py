@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import ase
 import torch
 
 
@@ -75,3 +76,44 @@ def _neighbor_list_torch(
     edge_vec = diff[src, dst]  # [E, 3]
     edge_dist = dist[src, dst]  # [E]
     return edge_index, edge_vec, edge_dist
+
+
+def build_graph(
+    atoms: ase.Atoms,
+    *,
+    cutoff: float,
+    dtype: torch.dtype = torch.float32,
+    device: torch.device | str = "cpu",
+) -> AtomGraph:
+    """Build a radial-cutoff graph from an ASE Atoms object.
+
+    Non-periodic systems use a hand-written O(N^2) pair scan (see
+    `_neighbor_list_torch`). rMD17 molecules have <= 21 atoms; the cost is
+    dominated by Python overhead and we prefer the readable implementation.
+
+    For periodic systems (any of `atoms.pbc` is True), raises
+    NotImplementedError. PBC support arrives with notebook 06.
+
+    Args:
+        atoms:  ASE Atoms; `atoms.numbers` and `atoms.positions` are read.
+        cutoff: radial cutoff in Å. Edges connect pairs with 0 < dist <= cutoff.
+        dtype:  floating dtype for positions and edge features.
+        device: device for all returned tensors.
+    """
+    if any(atoms.pbc):
+        raise NotImplementedError("PBC support added in notebook 06")
+
+    z = torch.as_tensor(atoms.numbers, dtype=torch.long, device=device)
+    pos = torch.as_tensor(atoms.positions, dtype=dtype, device=device)
+    edge_index, edge_vec, edge_dist = _neighbor_list_torch(pos, cutoff)
+
+    return AtomGraph(
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_vec=edge_vec,
+        edge_dist=edge_dist,
+        cutoff=float(cutoff),
+        cell=None,
+        pbc=(False, False, False),
+    )
