@@ -31,3 +31,31 @@ def test_load_rmd17_split_test_selects_correct_indices(rmd17_mini_root: Path) ->
 
     assert sorted(bundle.meta["frame_idx"].to_list()) == [3, 4]
     assert set(bundle.meta["split"].to_list()) == {"test"}
+
+
+def test_load_rmd17_n_frames_is_deterministic_under_seed(rmd17_mini_root: Path) -> None:
+    a = load_rmd17(
+        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
+    )
+    b = load_rmd17(
+        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
+    )
+    assert a.meta["frame_idx"].to_list() == b.meta["frame_idx"].to_list()
+
+
+def test_load_rmd17_n_frames_differs_across_seeds(rmd17_mini_root: Path) -> None:
+    a = load_rmd17(
+        "aspirin", split="all", cv_fold=1, n_frames=3, seed=0, data_root=rmd17_mini_root
+    )
+    b = load_rmd17(
+        "aspirin", split="all", cv_fold=1, n_frames=3, seed=1, data_root=rmd17_mini_root
+    )
+    assert a.meta["frame_idx"].to_list() != b.meta["frame_idx"].to_list()
+
+
+def test_load_rmd17_n_frames_caps_at_available(rmd17_mini_root: Path) -> None:
+    # Asking for more than available returns all available, no error.
+    bundle = load_rmd17(
+        "aspirin", split="train", cv_fold=1, n_frames=999, data_root=rmd17_mini_root
+    )
+    assert len(bundle.meta) == 3
