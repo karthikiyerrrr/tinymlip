@@ -50,6 +50,16 @@ class AtomGraph:
     def n_edges(self) -> int:
         return int(self.edge_index.shape[1])
 
+    def __repr__(self) -> str:
+        # The dataclass-generated repr dumps every tensor (positions, edge_index,
+        # edge_vec, edge_dist). On anything bigger than a toy that is a wall of
+        # numbers in a notebook cell. Print a one-line summary instead; the
+        # individual fields are still accessible as attributes.
+        return (
+            f"AtomGraph(n_atoms={self.n_atoms}, n_edges={self.n_edges}, "
+            f"cutoff={self.cutoff:.2f}, pbc={any(self.pbc)})"
+        )
+
 
 def _neighbor_list_torch(
     pos: torch.Tensor,

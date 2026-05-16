@@ -52,6 +52,31 @@ def test_atomgraph_holds_documented_fields():
         g.cutoff = 3.0  # type: ignore[misc]
 
 
+def test_atomgraph_repr_is_short_and_informative():
+    # An rMD17-sized molecule: full tensor repr would be hundreds of lines.
+    # The custom __repr__ should stay on one line and surface the key fields.
+    z = torch.ones(21, dtype=torch.long)
+    pos = torch.zeros((21, 3), dtype=torch.float32)
+    edge_index = torch.zeros((2, 84), dtype=torch.long)
+    edge_vec = torch.zeros((84, 3), dtype=torch.float32)
+    edge_dist = torch.zeros((84,), dtype=torch.float32)
+    g = AtomGraph(
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_vec=edge_vec,
+        edge_dist=edge_dist,
+        cutoff=5.0,
+    )
+
+    r = repr(g)
+    assert "\n" not in r, "AtomGraph repr should fit on one line"
+    assert len(r) < 120, f"AtomGraph repr should be short, got {len(r)} chars"
+    assert "n_atoms=21" in r
+    assert "n_edges=84" in r
+    assert "cutoff=5.00" in r
+
+
 def test_neighbor_list_honors_cutoff_and_excludes_self_loops():
     # Atoms on a line at x = 0, 1, 2, 5 (Y=Z=0).
     pos = torch.tensor(
