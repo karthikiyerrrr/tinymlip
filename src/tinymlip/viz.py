@@ -194,3 +194,91 @@ def plot_graph_3d(
         showlegend=True,
     )
     return fig
+
+
+def plot_edge_distance_histogram(
+    graph: AtomGraph,
+    *,
+    bins: int = 40,
+    height: int = 240,
+) -> go.Figure:
+    """Histogram of every pairwise distance, with `graph.cutoff` as a line.
+
+    Two histogram traces share the same bin edges: pairs at distance <=
+    cutoff (teal, "kept") and pairs at distance > cutoff (grey, "excluded").
+    A vertical dashed line is drawn at the cutoff. The headline: the cutoff
+    is a threshold on the distance distribution.
+    """
+    pos_np = graph.pos.detach().cpu().numpy()
+    n = pos_np.shape[0]
+
+    # Upper-triangular pairwise distances.
+    diffs = pos_np[None, :, :] - pos_np[:, None, :]  # [N, N, 3]
+    dists = np.linalg.norm(diffs, axis=-1)  # [N, N]
+    iu, ju = np.triu_indices(n, k=1)
+    pair_dists = dists[iu, ju]
+
+    if pair_dists.size == 0:
+        bin_edges = np.linspace(0.0, max(graph.cutoff, 1.0), bins + 1)
+    else:
+        bin_edges = np.linspace(0.0, float(pair_dists.max()) * 1.05, bins + 1)
+
+    kept = pair_dists[pair_dists <= graph.cutoff]
+    excluded = pair_dists[pair_dists > graph.cutoff]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Histogram(
+            x=kept,
+            xbins={
+                "start": bin_edges[0],
+                "end": bin_edges[-1],
+                "size": bin_edges[1] - bin_edges[0],
+            },
+            marker_color="#3ddbd9",
+            name="kept (in cutoff)",
+        )
+    )
+    fig.add_trace(
+        go.Histogram(
+            x=excluded,
+            xbins={
+                "start": bin_edges[0],
+                "end": bin_edges[-1],
+                "size": bin_edges[1] - bin_edges[0],
+            },
+            marker_color="#3a4250",
+            name="excluded",
+        )
+    )
+
+    fig.add_shape(
+        type="line",
+        name="cutoff",
+        x0=graph.cutoff,
+        x1=graph.cutoff,
+        y0=0,
+        y1=1,
+        yref="paper",
+        line={"color": "#ff8a3a", "width": 2, "dash": "dash"},
+    )
+    fig.add_annotation(
+        x=graph.cutoff,
+        y=1.0,
+        yref="paper",
+        text=f"cutoff = {graph.cutoff:.2f} Å",
+        showarrow=False,
+        font={"color": "#ff8a3a"},
+        xanchor="left",
+        yanchor="bottom",
+    )
+
+    fig.update_layout(
+        height=height,
+        margin={"l": 40, "r": 10, "t": 30, "b": 40},
+        xaxis_title="pairwise distance (Å)",
+        yaxis_title="count",
+        barmode="overlay",
+        bargap=0.05,
+    )
+    return fig

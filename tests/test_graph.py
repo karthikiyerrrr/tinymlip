@@ -210,3 +210,23 @@ def test_plot_graph_3d_returns_a_plotly_figure():
     fig_atoms_only = plot_graph_3d(g, show_bonds=False, show_edges=False)
     assert len(fig_atoms_only.data) == 1
     assert fig_atoms_only.data[0].name == "atoms"
+
+
+def test_plot_edge_distance_histogram_returns_a_plotly_figure():
+    from tinymlip.viz import plot_edge_distance_histogram
+
+    atoms = Atoms(
+        numbers=[1, 6, 6, 8],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.4, 0.0, 0.0], [3.5, 0.0, 0.0]],
+    )
+    g = build_graph(atoms, cutoff=2.0)
+
+    fig = plot_edge_distance_histogram(g)
+
+    assert isinstance(fig, go.Figure)
+    # Two histogram traces (kept, excluded).
+    assert len(fig.data) >= 1
+    # A vertical cutoff line is drawn as a layout shape (plotly Shape objects
+    # expose `.type`, not a dict-style .get()).
+    shapes = fig.layout.shapes or ()
+    assert any(getattr(s, "type", None) == "line" for s in shapes)
