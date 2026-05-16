@@ -205,3 +205,8 @@ def test_plot_graph_3d_returns_a_plotly_figure():
     assert isinstance(fig, go.Figure)
     # At least: one atom-scatter trace, plus at least one of (bond lines, edge lines).
     assert len(fig.data) >= 2
+
+    # Atom trace must always be present regardless of show_* flags.
+    fig_atoms_only = plot_graph_3d(g, show_bonds=False, show_edges=False)
+    assert len(fig_atoms_only.data) == 1
+    assert fig_atoms_only.data[0].name == "atoms"

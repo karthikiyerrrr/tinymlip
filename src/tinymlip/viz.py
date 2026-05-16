@@ -50,7 +50,13 @@ _MARKER_SIZE_SCALE = 20.0
 
 
 def _bond_pairs(z: torch.Tensor, pos: torch.Tensor) -> list[tuple[int, int]]:
-    """Pairs (i, j) with i < j whose distance is below a covalent threshold."""
+    """Pairs (i, j) with i < j whose interatomic distance is below a covalent-bond threshold.
+
+    This is for *visual* bonds only — the threshold uses ASE covalent radii
+    × ``_BOND_RADIUS_SLOP`` (1.15) and is a common viewer convention. These
+    bonds are independent of the graph edges used by the model; the same
+    function is called from the same notebook to render both.
+    """
     n = z.shape[0]
     radii = np.array([element_radius(int(zi)) for zi in z])
     pos_np = pos.detach().cpu().numpy()
