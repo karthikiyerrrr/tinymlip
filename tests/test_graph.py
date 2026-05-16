@@ -169,3 +169,23 @@ def test_build_graph_rejects_periodic_systems_with_clear_message():
 
     with pytest.raises(NotImplementedError, match="notebook 06"):
         build_graph(atoms, cutoff=5.0)
+
+
+def test_element_color_falls_back_for_unknown_z():
+    from tinymlip.viz import element_color
+
+    assert element_color(1) == "#ffffff"  # H is white in CPK-ish palette
+    assert element_color(6) == "#444444"  # C is dark grey
+    assert element_color(8) == "#ff0d0d"  # O is red
+    # Unknown / exotic element — should fall back, not raise.
+    assert element_color(118) == "#888888"
+
+
+def test_element_radius_uses_ase_covalent_radii():
+    from ase.data import covalent_radii
+
+    from tinymlip.viz import element_radius
+
+    # We return ASE's covalent radius for the element, in Å.
+    assert element_radius(1) == pytest.approx(covalent_radii[1])
+    assert element_radius(6) == pytest.approx(covalent_radii[6])
