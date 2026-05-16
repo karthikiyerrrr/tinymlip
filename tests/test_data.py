@@ -74,3 +74,12 @@ def test_load_rmd17_energy_and_forces_round_trip(rmd17_mini_root: Path) -> None:
         assert bundle.meta["energy"][row_i] == pytest.approx(
             float(raw["energies"][frame_idx])
         )
+
+
+def test_load_rmd17_missing_file_raises_with_actionable_message(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError) as excinfo:
+        load_rmd17("aspirin", data_root=tmp_path)
+
+    msg = str(excinfo.value)
+    assert "data/download.py --dataset rmd17 --molecule aspirin" in msg
+    assert "rmd17_aspirin.npz" in msg
