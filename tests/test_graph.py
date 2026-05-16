@@ -5,11 +5,13 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+import plotly.graph_objects as go
 import pytest
 import torch
 from ase import Atoms
 
 from tinymlip.graph import AtomGraph, _neighbor_list_torch, build_graph
+from tinymlip.viz import plot_graph_3d
 
 
 def test_atomgraph_holds_documented_fields():
@@ -189,3 +191,17 @@ def test_element_radius_uses_ase_covalent_radii():
     # We return ASE's covalent radius for the element, in Å.
     assert element_radius(1) == pytest.approx(covalent_radii[1])
     assert element_radius(6) == pytest.approx(covalent_radii[6])
+
+
+def test_plot_graph_3d_returns_a_plotly_figure():
+    atoms = Atoms(
+        numbers=[1, 6, 6, 8],
+        positions=[[0.0, 0.0, 0.0], [1.1, 0.0, 0.0], [2.4, 0.0, 0.0], [3.5, 0.0, 0.0]],
+    )
+    g = build_graph(atoms, cutoff=2.0)
+
+    fig = plot_graph_3d(g)
+
+    assert isinstance(fig, go.Figure)
+    # At least: one atom-scatter trace, plus at least one of (bond lines, edge lines).
+    assert len(fig.data) >= 2
