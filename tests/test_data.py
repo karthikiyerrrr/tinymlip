@@ -17,3 +17,17 @@ def test_load_rmd17_returns_paired_meta_and_structures(rmd17_mini_root: Path) ->
     for i, atoms in enumerate(bundle.structures):
         assert bundle.meta["n_atoms"][i] == len(atoms)
         assert bundle.meta["molecule"][i] == "aspirin"
+
+
+def test_load_rmd17_split_train_selects_correct_indices(rmd17_mini_root: Path) -> None:
+    bundle = load_rmd17("aspirin", split="train", cv_fold=1, data_root=rmd17_mini_root)
+
+    assert sorted(bundle.meta["frame_idx"].to_list()) == [0, 1, 2]
+    assert set(bundle.meta["split"].to_list()) == {"train"}
+
+
+def test_load_rmd17_split_test_selects_correct_indices(rmd17_mini_root: Path) -> None:
+    bundle = load_rmd17("aspirin", split="test", cv_fold=1, data_root=rmd17_mini_root)
+
+    assert sorted(bundle.meta["frame_idx"].to_list()) == [3, 4]
+    assert set(bundle.meta["split"].to_list()) == {"test"}
