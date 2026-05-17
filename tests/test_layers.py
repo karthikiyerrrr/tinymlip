@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from tinymlip.graph import AtomGraph
-from tinymlip.layers import InvariantInteraction
+from tinymlip.layers import EquivariantInteraction, InvariantInteraction
 
 
 def _random_graph(n_atoms: int = 9, cutoff: float = 2.5, seed: int = 0) -> AtomGraph:
@@ -135,3 +135,89 @@ def test_invariant_interaction_rotation_invariance():
     out_r = layer(x, graph_r)
     # Invariant: output unchanged under rotation of inputs.
     assert torch.allclose(out_r, out_ref, atol=1e-5)
+
+
+def test_equivariant_interaction_shape():
+    torch.manual_seed(0)
+    graph = _random_graph()
+    layer = EquivariantInteraction(hidden_dim=16, num_basis=8, cutoff=graph.cutoff)
+    s = torch.randn(graph.n_atoms, 16)
+    v = torch.zeros(graph.n_atoms, 16, 3)
+    s_out, v_out = layer(s, v, graph)
+    assert s_out.shape == (graph.n_atoms, 16)
+    assert v_out.shape == (graph.n_atoms, 16, 3)
+
+
+def test_equivariant_interaction_permutation_equivariance():
+    torch.manual_seed(0)
+    graph = _random_graph()
+    layer = EquivariantInteraction(hidden_dim=16, num_basis=8, cutoff=graph.cutoff)
+    s = torch.randn(graph.n_atoms, 16)
+    v = torch.randn(graph.n_atoms, 16, 3)
+    s_ref, v_ref = layer(s, v, graph)
+
+    rng = np.random.default_rng(1)
+    perm = torch.tensor(rng.permutation(graph.n_atoms), dtype=torch.long)
+    inverse = torch.argsort(perm)
+    pos_p = graph.pos[perm]
+    z_p = graph.z[perm]
+    src, dst = graph.edge_index
+    edge_index_p = torch.stack([inverse[src], inverse[dst]])
+    edge_vec_p = pos_p[edge_index_p[1]] - pos_p[edge_index_p[0]]
+    edge_dist_p = edge_vec_p.norm(dim=-1)
+    graph_p = AtomGraph(
+        z=z_p,
+        pos=pos_p,
+        edge_index=edge_index_p,
+        edge_vec=edge_vec_p,
+        edge_dist=edge_dist_p,
+        cutoff=graph.cutoff,
+    )
+    s_out, v_out = layer(s[perm], v[perm], graph_p)
+    assert torch.allclose(s_out, s_ref[perm], atol=1e-5)
+    assert torch.allclose(v_out, v_ref[perm], atol=1e-5)
+
+
+def test_equivariant_interaction_translation_invariance():
+    torch.manual_seed(0)
+    graph = _random_graph()
+    layer = EquivariantInteraction(hidden_dim=16, num_basis=8, cutoff=graph.cutoff)
+    s = torch.randn(graph.n_atoms, 16)
+    v = torch.randn(graph.n_atoms, 16, 3)
+    s_ref, v_ref = layer(s, v, graph)
+
+    shift = torch.tensor([10.0, -3.0, 7.0])
+    pos_t = graph.pos + shift
+    graph_t = AtomGraph(
+        z=graph.z,
+        pos=pos_t,
+        edge_index=graph.edge_index,
+        edge_vec=graph.edge_vec,
+        edge_dist=graph.edge_dist,
+        cutoff=graph.cutoff,
+    )
+    s_out, v_out = layer(s, v, graph_t)
+    assert torch.allclose(s_out, s_ref, atol=1e-6)
+    assert torch.allclose(v_out, v_ref, atol=1e-6)
+
+
+def test_equivariant_interaction_rotation_equivariance():
+    # IMPORTANT: input v must be non-zero. With v=0, the propagation message
+    # and the update-phase mixing both no-op, so a bug in those code paths
+    # would not be caught.
+    torch.manual_seed(0)
+    graph = _random_graph()
+    layer = EquivariantInteraction(hidden_dim=16, num_basis=8, cutoff=graph.cutoff)
+    s = torch.randn(graph.n_atoms, 16)
+    v = torch.randn(graph.n_atoms, 16, 3)
+    s_ref, v_ref = layer(s, v, graph)
+
+    R = _random_rotation(seed=3)  # noqa: N806 — R is standard rotation matrix notation
+    graph_r = _rotate_graph(graph, R)
+    # Vectors rotate with the molecule.
+    v_rot = v @ R.T  # [N, F, 3] -> rotate last dim by R^T
+    s_out, v_out = layer(s, v_rot, graph_r)
+
+    # Scalars unchanged; vectors rotated by R.
+    assert torch.allclose(s_out, s_ref, atol=1e-4)
+    assert torch.allclose(v_out, v_ref @ R.T, atol=1e-4)
