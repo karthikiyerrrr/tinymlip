@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from tinymlip.basis import BesselBasis
+from tinymlip.basis import BesselBasis, CosineEnvelope
 
 
 def test_bessel_basis_shape():
@@ -25,18 +25,17 @@ def test_bessel_basis_is_finite_at_very_small_r():
 
 
 def test_cosine_envelope_boundary_values():
-    from tinymlip.basis import CosineEnvelope
-
     env = CosineEnvelope(cutoff=5.0)
-    r = torch.tensor([0.0, 5.0])
+    r = torch.tensor([0.0, 5.0, 5.1, 10.0])
     out = env(r)
     assert torch.allclose(out[0], torch.tensor(1.0))
     assert torch.allclose(out[1], torch.tensor(0.0), atol=1e-7)
+    # r > cutoff must return exactly zero (guards the torch.where condition).
+    assert out[2].item() == 0.0
+    assert out[3].item() == 0.0
 
 
 def test_cosine_envelope_is_monotone_non_increasing():
-    from tinymlip.basis import CosineEnvelope
-
     env = CosineEnvelope(cutoff=5.0)
     r = torch.linspace(0.0, 5.0, 50)
     out = env(r)
@@ -47,8 +46,6 @@ def test_cosine_envelope_is_monotone_non_increasing():
 def test_basis_times_envelope_is_zero_at_cutoff():
     # Multiplying basis by envelope must vanish exactly at r = cutoff
     # so per-edge quantities are continuous as atoms cross the boundary.
-    from tinymlip.basis import CosineEnvelope
-
     basis = BesselBasis(num_basis=8, cutoff=5.0)
     env = CosineEnvelope(cutoff=5.0)
     r = torch.tensor([5.0])
