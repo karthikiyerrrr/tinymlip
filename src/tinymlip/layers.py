@@ -119,14 +119,6 @@ class EquivariantInteraction(nn.Module):
         share the same modules so the notebook-05 comparison is clean).
       - SiLU activation (matches PaiNN; called out for symmetry with the
         invariant layer's docstring).
-      - vector features stored as [N, F, 3] (features first, spatial last)
-        rather than PaiNN's [N, 3, F]. Both layouts are equivalent; ours
-        lets nn.Linear act directly on the F dimension (no transpose in the
-        message phase) and keeps shape comments consistent with s: [N, F].
-      - The update-phase vector mixer uses two separate F→F linears (U, V)
-        rather than one 2F-output linear. These are mathematically
-        equivalent; two named linears make the correspondence to the PaiNN
-        paper (Eq. 7–8, U and V are labelled separately) clearer.
       - Norm computed as Vv.norm(dim=-1) (no epsilon guard). The reference
         adds a small epsilon for numerical stability in production; we omit
         it here so the formula reads cleanly. For the tiny test molecules
