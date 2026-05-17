@@ -51,7 +51,10 @@ known-first-party = ["tinymlip"]
 [tool.ruff.lint.per-file-ignores]
 # Marimo notebooks use a trailing bare expression as the cell's displayed
 # output — this is the idiomatic way to surface a value in marimo, not a bug.
-"notebooks/*.py" = ["B018"]
+# N803: marimo's generated cell signatures inject imported names (e.g. class
+# names like `InvariantInteraction`) as function arguments — the casing is
+# inherited from the import, not chosen by us.
+"notebooks/*.py" = ["B018", "N803"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
