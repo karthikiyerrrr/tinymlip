@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 from tinymlip.graph import AtomGraph
-from tinymlip.layers import EquivariantInteraction, InvariantInteraction
+from tinymlip.layers import AtomicReadout, EquivariantInteraction, InvariantInteraction
 
 
 def _random_graph(n_atoms: int = 9, cutoff: float = 2.5, seed: int = 0) -> AtomGraph:
@@ -221,3 +221,20 @@ def test_equivariant_interaction_rotation_equivariance():
     # Scalars unchanged; vectors rotated by R.
     assert torch.allclose(s_out, s_ref, atol=1e-4)
     assert torch.allclose(v_out, v_ref @ R.T, atol=1e-4)
+
+
+def test_atomic_readout_shape_and_independence():
+    """Readout produces [N, 1] from [N, F] and is per-atom (no cross-talk)."""
+    torch.manual_seed(0)
+    readout = AtomicReadout(hidden_dim=16)
+    x = torch.randn(5, 16)
+
+    y = readout(x)
+    assert y.shape == (5, 1)
+
+    # Per-atom independence: changing atom 0's features must not change atom 3's output.
+    x2 = x.clone()
+    x2[0] = torch.randn(16)
+    y2 = readout(x2)
+    assert torch.allclose(y[3], y2[3])
+    assert not torch.allclose(y[0], y2[0])

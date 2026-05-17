@@ -216,3 +216,29 @@ class EquivariantInteraction(nn.Module):
         s = s + a_ss + a_sv * vdot  # scalar gets two corrections
         v = v + a_vv.unsqueeze(-1) * Uv  # gated vector update
         return s, v
+
+
+class AtomicReadout(nn.Module):
+    """Per-atom scalar head. Two-layer MLP F -> F/2 -> 1 with SiLU activation.
+
+    Used by both InvariantMPNN and EquivariantMPNN. Returns [N, 1]; the model
+    is responsible for summing over atoms. Keeping the sum outside this module
+    makes 'energy = sum_i E_i' visible at the model level, which is the central
+    teaching point of notebook 03 (and the reason MLIP energies are size-extensive).
+
+    Based on the Atomwise readout block in SchNetPack
+    (src/schnetpack/atomistic/atomwise.py), with n_layers=2 and the default
+    pyramidal hidden sizing (F -> F/2 -> 1).
+    """
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.SiLU(),
+            nn.Linear(hidden_dim // 2, 1),
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [N, hidden_dim] -> [N, 1]
+        return self.mlp(x)
