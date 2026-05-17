@@ -58,7 +58,7 @@ def load_rmd17(
     """Load one rMD17 molecule into a polars+ASE bundle.
 
     Args:
-        molecule: rMD17 molecule name (e.g. "aspirin").
+        molecule: rMD17 molecule name (e.g. "ethanol").
         split: "train" or "test" (per the official rMD17 CV fold), or "all" for
             the union of the two.
         cv_fold: Which of the 5 official splits to use (1..5).
