@@ -23,3 +23,49 @@ references:
     start: 146401
     year: 2007
     doi: 10.1103/PhysRevLett.98.146401
+  - type: article
+    authors:
+      - family-names: Gilmer
+        given-names: Justin
+      - family-names: Schoenholz
+        given-names: Samuel S.
+      - family-names: Riley
+        given-names: Patrick F.
+      - family-names: Vinyals
+        given-names: Oriol
+      - family-names: Dahl
+        given-names: George E.
+    title: "Neural Message Passing for Quantum Chemistry"
+    year: 2017
+    url: "https://arxiv.org/abs/1704.01212"
+    notes: "arXiv:1704.01212"
+  - type: article
+    authors:
+      - family-names: Schütt
+        given-names: Kristof T.
+      - family-names: Kindermans
+        given-names: Pieter-Jan
+      - family-names: Sauceda
+        given-names: Huziel E.
+      - family-names: Chmiela
+        given-names: Stefan
+      - family-names: Tkatchenko
+        given-names: Alexandre
+      - family-names: Müller
+        given-names: Klaus-Robert
+    title: "SchNet: A continuous-filter convolutional neural network for modeling quantum interactions"
+    year: 2017
+    url: "https://arxiv.org/abs/1706.08566"
+    notes: "arXiv:1706.08566"
+  - type: article
+    authors:
+      - family-names: Schütt
+        given-names: Kristof T.
+      - family-names: Unke
+        given-names: Oliver T.
+      - family-names: Gastegger
+        given-names: Michael
+    title: "Equivariant message passing for the prediction of tensorial properties and molecular spectra (PaiNN)"
+    year: 2021
+    url: "https://arxiv.org/abs/2102.03150"
+    notes: "arXiv:2102.03150"
