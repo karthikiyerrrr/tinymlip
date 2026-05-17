@@ -22,3 +22,35 @@ def test_bessel_basis_is_finite_at_very_small_r():
     r = torch.tensor([1e-8, 1e-6, 1e-3])
     out = basis(r)
     assert torch.isfinite(out).all(), "Bessel basis must not NaN/Inf for tiny r"
+
+
+def test_cosine_envelope_boundary_values():
+    from tinymlip.basis import CosineEnvelope
+
+    env = CosineEnvelope(cutoff=5.0)
+    r = torch.tensor([0.0, 5.0])
+    out = env(r)
+    assert torch.allclose(out[0], torch.tensor(1.0))
+    assert torch.allclose(out[1], torch.tensor(0.0), atol=1e-7)
+
+
+def test_cosine_envelope_is_monotone_non_increasing():
+    from tinymlip.basis import CosineEnvelope
+
+    env = CosineEnvelope(cutoff=5.0)
+    r = torch.linspace(0.0, 5.0, 50)
+    out = env(r)
+    diffs = out[1:] - out[:-1]
+    assert (diffs <= 1e-7).all(), "envelope must be non-increasing on [0, cutoff]"
+
+
+def test_basis_times_envelope_is_zero_at_cutoff():
+    # Multiplying basis by envelope must vanish exactly at r = cutoff
+    # so per-edge quantities are continuous as atoms cross the boundary.
+    from tinymlip.basis import CosineEnvelope
+
+    basis = BesselBasis(num_basis=8, cutoff=5.0)
+    env = CosineEnvelope(cutoff=5.0)
+    r = torch.tensor([5.0])
+    combined = basis(r) * env(r).unsqueeze(-1)
+    assert torch.allclose(combined, torch.zeros_like(combined), atol=1e-6)

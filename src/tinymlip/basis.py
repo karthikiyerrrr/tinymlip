@@ -36,11 +36,30 @@ class BesselBasis(nn.Module):
         # so it moves with .to(device).
         n = torch.arange(1, num_basis + 1, dtype=torch.float32)
         self.register_buffer("freqs", n * math.pi / self.cutoff)
-        self.register_buffer(
-            "prefactor", torch.tensor(math.sqrt(2.0 / self.cutoff), dtype=torch.float32)
-        )
+        self.prefactor: float = math.sqrt(2.0 / self.cutoff)
 
     def forward(self, r: Tensor) -> Tensor:
         # r: [E] -> [E, num_basis]
         r_safe = r.clamp(min=1e-6).unsqueeze(-1)  # [E, 1]
         return self.prefactor * torch.sin(self.freqs * r_safe) / r_safe
+
+
+class CosineEnvelope(nn.Module):
+    """Smooth cutoff envelope: 1 at r=0, exactly 0 at r=cutoff.
+
+    f_cut(r) = 0.5 * (cos(pi*r/cutoff) + 1) for r <= cutoff else 0.
+
+    Multiplying the radial basis by this envelope guarantees that any
+    per-edge quantity vanishes as r -> cutoff. That keeps the predicted
+    energy continuous as atoms cross the cutoff boundary, which in turn
+    keeps forces (= -dE/dr) well-defined.
+    """
+
+    def __init__(self, cutoff: float) -> None:
+        super().__init__()
+        self.cutoff = float(cutoff)
+
+    def forward(self, r: Tensor) -> Tensor:
+        # r: [E] -> [E]
+        inside = 0.5 * (torch.cos(math.pi * r / self.cutoff) + 1.0)
+        return torch.where(r <= self.cutoff, inside, torch.zeros_like(r))
