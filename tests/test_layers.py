@@ -9,10 +9,10 @@ from tinymlip.graph import AtomGraph
 from tinymlip.layers import InvariantInteraction
 
 
-def _random_graph(n_atoms: int = 9, cutoff: float = 5.0, seed: int = 0) -> AtomGraph:
-    """Small random graph fixture; positions in a 4-Angstrom cube."""
+def _random_graph(n_atoms: int = 9, cutoff: float = 2.5, seed: int = 0) -> AtomGraph:
+    """Small random graph fixture; positions in a 6-Angstrom cube."""
     rng = np.random.default_rng(seed)
-    pos = torch.tensor(rng.uniform(-2.0, 2.0, size=(n_atoms, 3)), dtype=torch.float32)
+    pos = torch.tensor(rng.uniform(-3.0, 3.0, size=(n_atoms, 3)), dtype=torch.float32)
     z = torch.tensor(rng.integers(1, 10, size=(n_atoms,)), dtype=torch.long)
     # Build edges by O(N^2) cutoff scan (mirrors graph._neighbor_list_torch).
     diff = pos.unsqueeze(0) - pos.unsqueeze(1)

@@ -46,8 +46,6 @@ class InvariantInteraction(nn.Module):
       - filter_net, phi_s, and phi_u all operate in the same hidden_dim
         (equivalent to SchNet with n_filters == n_atom_basis). SchNet allows
         them to differ; we tie them for simplicity.
-      - The residual skip connection is computed inside forward() rather than
-        in the outer model loop. The net effect is identical.
 
     Implementers: cross-check forward() against the reference SchNet code in
     https://github.com/atomistic-machine-learning/schnetpack
