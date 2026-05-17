@@ -1,5 +1,6 @@
 """tinymlip — an educational implementation of Machine Learning Interatomic Potentials."""
 
+from tinymlip.basis import BesselBasis, CosineEnvelope
 from tinymlip.data import RMD17Bundle, load_rmd17, to_torch_dataset
 from tinymlip.graph import AtomGraph, build_graph
 from tinymlip.viz import (
@@ -9,6 +10,8 @@ from tinymlip.viz import (
 )
 
 __all__ = [
+    "BesselBasis",
+    "CosineEnvelope",
     "RMD17Bundle",
     "load_rmd17",
     "to_torch_dataset",
