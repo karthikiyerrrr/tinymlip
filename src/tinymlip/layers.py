@@ -114,11 +114,6 @@ class EquivariantInteraction(nn.Module):
          invariants ||V·v|| and <U·v, V·v>, with a gated update on v.
 
     Deviations from PaiNN:
-      - Radial basis is the same Bessel + cosine envelope used by
-        InvariantInteraction (PaiNN already uses this in the paper; we just
-        share the same modules so the notebook-05 comparison is clean).
-      - SiLU activation (matches PaiNN; called out for symmetry with the
-        invariant layer's docstring).
       - Norm computed as Vv.norm(dim=-1) (no epsilon guard). The reference
         adds a small epsilon for numerical stability in production; we omit
         it here so the formula reads cleanly. For the tiny test molecules
@@ -141,7 +136,6 @@ class EquivariantInteraction(nn.Module):
 
     def __init__(self, hidden_dim: int, num_basis: int, cutoff: float) -> None:
         super().__init__()
-        self.hidden_dim = hidden_dim
         self.basis = BesselBasis(num_basis, cutoff)
         self.envelope = CosineEnvelope(cutoff)
 
