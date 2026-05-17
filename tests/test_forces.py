@@ -6,7 +6,7 @@ import torch
 
 from tinymlip.forces import compute_forces
 from tinymlip.graph import build_graph
-from tinymlip.models import InvariantMPNN
+from tinymlip.models import EquivariantMPNN, InvariantMPNN
 
 
 def test_compute_forces_negates_analytic_gradient():
@@ -44,3 +44,16 @@ def test_invariant_mpnn_forward_returns_scalar(ethanol_atoms):
 
     assert energy.dim() == 0  # scalar
     assert energy.requires_grad  # gradient path to pos is intact
+
+
+def test_equivariant_mpnn_forward_returns_scalar(ethanol_atoms):
+    """Forward pass returns a single scalar energy with a grad path to pos."""
+    torch.manual_seed(0)
+    model = EquivariantMPNN(hidden_dim=16, num_basis=8, cutoff=5.0, n_layers=2)
+
+    graph = build_graph(ethanol_atoms, cutoff=5.0)
+    graph.pos.requires_grad_(True)
+    energy = model(graph)
+
+    assert energy.dim() == 0
+    assert energy.requires_grad

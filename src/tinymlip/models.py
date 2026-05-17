@@ -28,12 +28,13 @@ model class.
 
 from __future__ import annotations
 
+import torch
 from torch import Tensor, nn
 
 from tinymlip.graph import AtomGraph
 from tinymlip.layers import (
     AtomicReadout,
-    EquivariantInteraction,  # noqa: F401 — re-exported here for Task 5 (EquivariantMPNN)
+    EquivariantInteraction,
     InvariantInteraction,
 )
 
@@ -77,4 +78,56 @@ class InvariantMPNN(nn.Module):
         for layer in self.interactions:
             x = layer(x, graph)  # [N, F]
         per_atom_e = self.readout(x).squeeze(-1)  # [N]
+        return per_atom_e.sum()  # []
+
+
+class EquivariantMPNN(nn.Module):
+    """PaiNN-based equivariant MPNN: same anatomy as InvariantMPNN, but the
+    interaction layer carries scalar + vector features (s, v).
+
+    Based on Schütt et al. 2021 (PaiNN). Layer-level deviations match those
+    documented on EquivariantInteraction. Model-level deviations:
+      - No per-element reference energy shift (same reasoning as InvariantMPNN).
+      - Embedding size tied to hidden_dim.
+      - v is initialized to zeros (PaiNN convention, painn.py:222). The first
+        EquivariantInteraction call bootstraps vectors via the creation message
+        from edge directions.
+      - Readout consumes only s — energy is rotation-invariant, so the
+        rotation-equivariant vector channels v must not enter the scalar readout.
+      - Our EquivariantInteraction.forward fuses PaiNN's message and update
+        phases into one call; upstream splits them into PaiNNInteraction +
+        PaiNNMixing. So this forward loop has one `s, v = layer(s, v, graph)`
+        per block, not two.
+      - Axis convention: our s is [N, F] and v is [N, F, 3]; upstream uses
+        [N, 1, F] and [N, 3, F]. Mathematically equivalent.
+    """
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_basis: int,
+        cutoff: float,
+        n_layers: int,
+        n_elements: int = 100,
+    ) -> None:
+        super().__init__()
+        self.hidden_dim = hidden_dim
+        self.embed = nn.Embedding(n_elements, hidden_dim)
+        self.interactions = nn.ModuleList(
+            [EquivariantInteraction(hidden_dim, num_basis, cutoff) for _ in range(n_layers)]
+        )
+        self.readout = AtomicReadout(hidden_dim)
+
+    def forward(self, graph: AtomGraph) -> Tensor:
+        s = self.embed(graph.z)  # [N, F]
+        v = torch.zeros(
+            graph.n_atoms,
+            self.hidden_dim,
+            3,
+            dtype=s.dtype,
+            device=s.device,
+        )  # [N, F, 3]
+        for layer in self.interactions:
+            s, v = layer(s, v, graph)
+        per_atom_e = self.readout(s).squeeze(-1)  # [N]
         return per_atom_e.sum()  # []
