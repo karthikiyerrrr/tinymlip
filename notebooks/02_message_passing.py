@@ -81,28 +81,31 @@ def _(atoms, cutoff, mo):
     torch.manual_seed(0)
 
     # 4 random scalar features per atom — pretend these are learned embeddings.
-    x = torch.randn(graph.n_atoms, 4)
+    atom_features = torch.randn(graph.n_atoms, 4)   # [n_atoms, n_features]
 
     # 1) Gather: every edge picks up the sender's feature.
-    src, dst = graph.edge_index
-    m = x[src]  # [E, 4]
+    senders, receivers = graph.edge_index           # each: [n_edges]
+    messages = atom_features[senders]               # [n_edges, n_features]
 
-    # 2) Aggregate: receivers sum their incoming messages.
-    agg = torch.zeros_like(x).index_add_(0, dst, m)  # [N, 4]
+    # 2) Aggregate: each receiver sums its incoming messages.
+    aggregated_messages = torch.zeros_like(atom_features).index_add_(
+        0, receivers, messages,
+    )                                                # [n_atoms, n_features]
 
     # 3) Update: residual sum of own feature + neighborhood.
-    x_new = x + agg
+    atom_features_next = atom_features + aggregated_messages   # [n_atoms, n_features]
 
     # Per-atom L2 change tells you which atoms moved the most.
-    change = (x_new - x).norm(dim=-1)
+    per_atom_change = (atom_features_next - atom_features).norm(dim=-1)  # [n_atoms]
     mo.md(
         f"`graph.n_atoms` = {graph.n_atoms}, `graph.n_edges` = {graph.n_edges}.\n\n"
         "Per-atom feature change after one naive MPNN step:\n\n"
         + "\n".join(
-            f"- atom {i} (Z={int(graph.z[i])}): change = {change[i].item():.3f}"
+            f"- atom {i} (Z={int(graph.z[i])}): change = {per_atom_change[i].item():.3f}"
             for i in range(graph.n_atoms)
         )
     )
+
     return build_graph, graph, torch
 
 
@@ -134,6 +137,18 @@ def _(mo):
        messages from neighbors at 1 Å, suppress messages from neighbors
        at 4 Å" — whatever the data calls for.
 
+    *Why bother expanding `r`?* A linear layer applied to a single number
+    can only learn a straight line in *r* — to fit a wiggly
+    distance-dependence the model would otherwise need many deep nonlinear
+    layers to relearn what "distance" means from scratch. With a
+    vocabulary of localized distance features, the same wiggly target
+    becomes a cheap linear combination of bumps — the same trick
+    transformers use with positional embeddings and kernel methods use
+    with RBFs. The cosine envelope multiplies in on top to drive every
+    basis feature smoothly to zero at the cutoff, so atoms drifting
+    across the cutoff boundary don't cause sudden jumps in energy or
+    forces.
+
     Together this is called a *continuous-filter convolution* (SchNet,
     Schütt et al. 2018) — "continuous" because the weight changes
     smoothly with distance, not in bins. The first piece (the eight
@@ -150,7 +165,7 @@ def _(mo):
     return (num_basis,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(cutoff, num_basis, r_demo, torch):
     import plotly.graph_objects as go
 
@@ -225,7 +240,6 @@ def _(cutoff, num_basis, r_demo, torch):
         height=380,
     )
     fig_basis
-
     return basis, env, go, palette
 
 
@@ -239,11 +253,10 @@ def _(cutoff, mo):
         label="r to decompose (Å)",
     )
     r_demo
-
     return (r_demo,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(basis, env, go, num_basis, palette, r_demo, torch):
     r_demo_t = torch.tensor([r_demo.value])
     decomposition = (basis(r_demo_t) * env(r_demo_t).unsqueeze(-1)).detach().squeeze(0).numpy()
@@ -264,11 +277,10 @@ def _(basis, env, go, num_basis, palette, r_demo, torch):
         height=300,
     )
     fig_decomp
-
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(cutoff, go, graph, num_basis, palette, torch):
     from tinymlip import InvariantInteraction
 
@@ -335,7 +347,6 @@ def _(cutoff, go, graph, num_basis, palette, torch):
         height=420,
     )
     fig_compare
-
     return
 
 
@@ -369,7 +380,6 @@ def _(mo):
     you're seeing different *capacity profiles*, not different trained
     behavior.
     """)
-
     return
 
 
@@ -391,11 +401,10 @@ def _(mo):
     cutoff we get the covalent-bond graph (C–H, C–C, C–O, O–H) and the
     receptive field grows visibly with depth.
     """)
-
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(atom_labels, go, graph_sparse):
     from tinymlip.viz import element_color, element_radius
 
@@ -456,11 +465,10 @@ def _(atom_labels, go, graph_sparse):
         margin=dict(l=0, r=0, t=40, b=0),
     )
     fig_3d
-
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(atoms, build_graph, go, torch):
     import numpy as np
     from ase.data import chemical_symbols
@@ -511,7 +519,6 @@ def _(atoms, build_graph, go, torch):
         height=320,
     )
     fig_field
-
     return atom_labels, graph_sparse
 
 
