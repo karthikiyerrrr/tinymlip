@@ -45,7 +45,7 @@ def _():
     return (atoms,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     cutoff = mo.ui.slider(start=2.0, stop=6.0, step=0.1, value=5.0, label="cutoff (Å)")
     cutoff
@@ -158,7 +158,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     num_basis = mo.ui.slider(start=4, stop=20, step=1, value=8, label="num_basis")
     num_basis
@@ -243,7 +243,7 @@ def _(cutoff, num_basis, r_demo, torch):
     return basis, env, go, palette
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(cutoff, mo):
     r_demo = mo.ui.slider(
         start=0.3,

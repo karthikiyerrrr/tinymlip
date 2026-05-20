@@ -44,14 +44,14 @@ def _():
     return (mo,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     cutoff = mo.ui.slider(start=2.0, stop=6.0, step=0.1, value=5.0, label="cutoff (Å)")
     cutoff
     return (cutoff,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     n_layers = mo.ui.slider(start=1, stop=5, step=1, value=3, label="n_layers")
     n_layers
@@ -317,7 +317,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     arrow_scale = mo.ui.slider(
         start=1.0, stop=50.0, step=1.0, value=20.0,
@@ -541,7 +541,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(graph, mo):
     atom_idx = mo.ui.dropdown(
         options={str(i): i for i in range(graph.n_atoms)},
@@ -552,7 +552,7 @@ def _(graph, mo):
     return (atom_idx,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     axis_idx = mo.ui.dropdown(
         options={"x": 0, "y": 1, "z": 2},

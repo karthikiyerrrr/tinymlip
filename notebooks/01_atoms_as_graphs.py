@@ -73,7 +73,7 @@ def _():
     return (atoms,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     cutoff = mo.ui.slider(start=1.0, stop=6.0, step=0.1, value=5.0, label="cutoff (Å)")
     cutoff
