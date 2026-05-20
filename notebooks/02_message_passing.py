@@ -60,9 +60,13 @@ def _(mo):
     For each atom *i*:
 
     1. **Gather:** look at every neighbor *j* connected by an edge.
-    2. **Aggregate:** combine those neighbor features into one vector (we use
-       a sum — order-independent, so the result doesn't depend on how the
-       neighbors are listed).
+    2. **Aggregate:** combine those neighbor features into one vector. We use
+       a **sum** rather than a mean for one specific reason: *size
+       extensivity*. If you put two copies of a system far apart, the energy
+       must double — and that only happens when per-atom features (and the
+       energy built from them) scale linearly with system size. A mean would
+       erase that scaling. (We unpack this in nb03 — Gilmer et al. 2017
+       call this gather/aggregate/update decomposition the "MPNN framework.")
     3. **Update:** mix the aggregate back into atom *i*'s own feature.
 
     The next cell does exactly this on ethanol with no learnable weights at
@@ -81,19 +85,23 @@ def _(atoms, cutoff, mo):
     torch.manual_seed(0)
 
     # 4 random scalar features per atom — pretend these are learned embeddings.
-    atom_features = torch.randn(graph.n_atoms, 4)   # [n_atoms, n_features]
+    atom_features = torch.randn(graph.n_atoms, 4)  # [n_atoms, n_features]
 
     # 1) Gather: every edge picks up the sender's feature.
-    senders, receivers = graph.edge_index           # each: [n_edges]
-    messages = atom_features[senders]               # [n_edges, n_features]
+    senders, receivers = graph.edge_index  # each: [n_edges]
+    messages = atom_features[senders]  # [n_edges, n_features]
 
     # 2) Aggregate: each receiver sums its incoming messages.
+    # index_add_(0, receivers, messages): for each edge e, add messages[e]
+    # into row receivers[e] of the destination — a scatter-sum.
     aggregated_messages = torch.zeros_like(atom_features).index_add_(
-        0, receivers, messages,
-    )                                                # [n_atoms, n_features]
+        0,
+        receivers,
+        messages,
+    )  # [n_atoms, n_features]
 
     # 3) Update: residual sum of own feature + neighborhood.
-    atom_features_next = atom_features + aggregated_messages   # [n_atoms, n_features]
+    atom_features_next = atom_features + aggregated_messages  # [n_atoms, n_features]
 
     # Per-atom L2 change tells you which atoms moved the most.
     per_atom_change = (atom_features_next - atom_features).norm(dim=-1)  # [n_atoms]
@@ -105,7 +113,6 @@ def _(atoms, cutoff, mo):
             for i in range(graph.n_atoms)
         )
     )
-
     return build_graph, graph, torch
 
 
@@ -154,7 +161,6 @@ def _(mo):
     smoothly with distance, not in bins. The first piece (the eight
     detectors) is what we look at next.
     """)
-
     return
 
 
