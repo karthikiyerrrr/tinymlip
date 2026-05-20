@@ -172,6 +172,29 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
+    mo.md(r"""
+    ### Same three steps, with knobs
+
+    The `InvariantInteraction` layer below is still gather → aggregate →
+    update — just with three small networks slotted in:
+
+    - `phi_s` runs **before** gather: it transforms each sender's features
+      before they ride out as messages.
+    - `W(r_ij)` runs **inside** aggregate: a tiny MLP (`filter_net`)
+      reads the edge's distance fingerprint and produces a per-edge,
+      per-channel weight that scales the message.
+    - `phi_u` runs **after** aggregate: it mixes the summed neighborhood
+      back into the receiver's own features.
+
+    Everything we're about to plot is the shape of `W(r_ij)` — the only
+    piece that depends on distance. The fingerprint bar chart below is
+    exactly what `filter_net` reads per edge.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     num_basis = mo.ui.slider(start=4, stop=20, step=1, value=8, label="num_basis")
     num_basis
     return (num_basis,)
