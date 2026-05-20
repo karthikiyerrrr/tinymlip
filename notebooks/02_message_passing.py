@@ -121,16 +121,22 @@ def _(mo):
     mo.md(r"""
     ## What's missing
 
-    Two problems with the cell above:
+    Three problems with the cell above:
 
     1. **Distance is ignored.** A neighbor 1 Å away contributes exactly as
        much as one 4 Å away. That's not physics — atoms feel each other
        through smooth, distance-dependent interactions.
     2. **No learnable transform.** The update was just a residual sum;
        nothing for the model to fit to data.
+    3. **Chemistry is missing.** We used random per-atom features above. In
+       a real model (nb04), an *embedding table* maps each atomic number
+       `z` to an initial `hidden_dim` vector — every carbon atom starts
+       with one feature vector, every hydrogen with another. We kept the
+       features random here to keep the focus on the message-passing
+       mechanics; nb04 is where chemistry enters the features.
 
-    **The fix: give each edge a *learnable* weight that depends on its
-    distance.** We do this in two steps:
+    **The fix for problems 1 and 2: give each edge a *learnable* weight
+    that depends on its distance.** We do this in two steps:
 
     1. **Expand the distance `r` into a vector of features.** Think of
        `num_basis = 8` as eight smooth "distance detectors" — one fires
