@@ -593,6 +593,12 @@ def _(mo):
     connected and depth 1 already covers everything. With a 1.6 Å
     cutoff we get the covalent-bond graph (C–H, C–C, C–O, O–H) and the
     receptive field grows visibly with depth.
+
+    *Why this matters later.* Ethanol is small and we had to *shrink* the
+    cutoff to see depth do anything. In nb06's crystals the cutoff is
+    small *relative* to the system (thousands of atoms in a box, cutoff
+    still ≈ 5 Å) — and that's where stacking layers genuinely earns its
+    keep.
     """)
     return
 
