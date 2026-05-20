@@ -365,205 +365,6 @@ def _(mo):
     return
 
 
-@app.cell
-def _(atoms, build_graph, torch):
-    import numpy as np
-    from ase.data import chemical_symbols
-
-    # Tighter graph for the topology demo: at the main cutoff (~5 Å) ethanol is
-    # fully connected and depth 1 already sees everything, so stacking layers
-    # cannot grow the receptive field. With demo_cutoff=1.6 Å we get ethanol's
-    # covalent-bond graph (C–H, C–C, C–O, O–H) — sparse, but still connected
-    # through the central C–C bond.
-    demo_cutoff = 1.6
-    graph_sparse = build_graph(atoms, cutoff=demo_cutoff)
-
-    n = graph_sparse.n_atoms
-    adjacency = torch.zeros(n, n)
-    adjacency[graph_sparse.edge_index[0], graph_sparse.edge_index[1]] = 1.0
-    # Self-loops: every atom is trivially reachable from itself at depth 0.
-    adjacency_self = adjacency + torch.eye(n)
-
-    # reach[k][i, j] = 1 iff atom j is reachable from atom i in <= k hops.
-    # Boolean matrix power: (A + I)^k > 0.
-    reach = [torch.eye(n)]  # depth 0: identity
-    power = adjacency_self.clone()
-    for _depth in range(1, 4):
-        reach.append((power > 0).float())  # depth 1..3
-        power = ((power @ adjacency_self) > 0).float()
-
-    # Element + index labels for axis / dropdown: "C[0]", "H[3]", ...
-    atom_labels = [f"{chemical_symbols[int(graph_sparse.z[i])]}[{i}]" for i in range(n)]
-    return atom_labels, demo_cutoff, graph_sparse, np, reach
-
-
-@app.cell(hide_code=True)
-def _(atom_labels, mo):
-    source_atom = mo.ui.dropdown(
-        options={label: i for i, label in enumerate(atom_labels)},
-        value=atom_labels[0],
-        label="source atom (receptive-field viewer)",
-    )
-    source_atom
-    return (source_atom,)
-
-
-@app.cell(hide_code=True)
-def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
-    from tinymlip.viz import element_color, element_radius
-
-    source_idx = source_atom.value
-    source_label = atom_labels[source_idx]
-
-    # depth_of_atom[j] = smallest k in {0, 1, 2, 3} such that j is reachable
-    # from source_idx in <= k hops; -1 if unreached within depth 3.
-    depth_of_atom = [-1] * graph_sparse.n_atoms
-    for j in range(graph_sparse.n_atoms):
-        for k in range(4):
-            if reach[k][source_idx, j] > 0:
-                depth_of_atom[j] = k
-                break
-
-    # Color each atom by its depth. Unreached atoms keep their CPK color
-    # (faded out via opacity); reached atoms get a bold gold-or-green fill so
-    # the receptive field is the dominant visual.
-    depth_color = {
-        0: "#d4a017",  # source: gold
-        1: "#2ca02c",  # depth 1: solid green
-        2: "#7ec97e",  # depth 2: medium green
-        3: "#cce8cc",  # depth 3: pale green
-    }
-    atom_fill = [
-        depth_color[d] if d >= 0 else element_color(int(graph_sparse.z[j]))
-        for j, d in enumerate(depth_of_atom)
-    ]
-
-    # Bond lines (one direction only).
-    bond_x, bond_y, bond_z = [], [], []
-    src_s, dst_s = graph_sparse.edge_index
-    for s_i, d_i in zip(src_s.tolist(), dst_s.tolist(), strict=True):
-        if s_i < d_i:
-            bond_x += [float(graph_sparse.pos[s_i, 0]), float(graph_sparse.pos[d_i, 0]), None]
-            bond_y += [float(graph_sparse.pos[s_i, 1]), float(graph_sparse.pos[d_i, 1]), None]
-            bond_z += [float(graph_sparse.pos[s_i, 2]), float(graph_sparse.pos[d_i, 2]), None]
-
-    pos_3d = graph_sparse.pos.numpy()
-    z_3d = graph_sparse.z.numpy()
-
-    fig_3d = go.Figure()
-    fig_3d.add_trace(
-        go.Scatter3d(
-            x=bond_x,
-            y=bond_y,
-            z=bond_z,
-            mode="lines",
-            line=dict(color="#888", width=4),
-            showlegend=False,
-            hoverinfo="skip",
-            name="bonds",
-        )
-    )
-    fig_3d.add_trace(
-        go.Scatter3d(
-            x=pos_3d[:, 0],
-            y=pos_3d[:, 1],
-            z=pos_3d[:, 2],
-            mode="markers+text",
-            marker=dict(
-                size=[element_radius(int(z)) * 18 for z in z_3d],
-                color=atom_fill,
-                opacity=1.0,  # per-atom opacity below via separate channels won't
-                # render reliably in 3d; we instead fade unreached
-                # atoms by mixing their CPK color toward white.
-                line=dict(color="#222", width=1),
-            ),
-            text=atom_labels,
-            textposition="top center",
-            textfont=dict(size=11, color="#111"),
-            hoverinfo="text",
-            showlegend=False,
-            name="atoms",
-        )
-    )
-
-    # Faux legend: one invisible trace per depth so the depth ramp shows up in
-    # the legend.
-    for d in (0, 1, 2, 3):
-        label = "source" if d == 0 else f"depth {d}"
-        fig_3d.add_trace(
-            go.Scatter3d(
-                x=[None],
-                y=[None],
-                z=[None],
-                mode="markers",
-                marker=dict(size=10, color=depth_color[d]),
-                name=label,
-                showlegend=True,
-            )
-        )
-
-    fig_3d.update_layout(
-        title=(f"Ethanol — receptive field of {source_label} (demo cutoff = {demo_cutoff} Å)"),
-        scene=dict(
-            xaxis=dict(visible=False),
-            yaxis=dict(visible=False),
-            zaxis=dict(visible=False),
-            aspectmode="data",
-            dragmode="turntable",
-        ),
-        height=420,
-        margin=dict(l=0, r=0, t=40, b=0),
-        legend=dict(orientation="h", yanchor="bottom", y=-0.05, x=0.5, xanchor="center"),
-    )
-    fig_3d
-    return
-
-
-@app.cell(hide_code=True)
-def _(atom_labels, demo_cutoff, go, graph_sparse, np, reach, source_atom):
-    source_idx_hm = source_atom.value
-    source_label_hm = atom_labels[source_idx_hm]
-
-    # Rows = depths 1..3, columns = atoms. Row k shows which atoms are reachable
-    # from the selected source in <= k hops.
-    rows = [reach[k][source_idx_hm].numpy() for k in (1, 2, 3)]
-    heat = np.stack(rows, axis=0)  # [3, n_atoms]
-
-    fig_field = go.Figure(
-        data=go.Heatmap(
-            z=heat,
-            x=atom_labels,
-            y=[f"depth {d}" for d in (1, 2, 3)],
-            colorscale=[[0.0, "#f4f4f8"], [1.0, "#2ca02c"]],
-            showscale=False,
-            xgap=2,
-            ygap=2,
-        )
-    )
-    fig_field.update_layout(
-        title=(
-            f"Receptive field of {source_label_hm} "
-            f"(demo cutoff = {demo_cutoff} Å, {graph_sparse.n_edges} edges)"
-        ),
-        xaxis_title="input atom",
-        yaxis_title="depth k",
-        height=320,
-    )
-    fig_field
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    *Every atom has its own receptive field of the same depth — the
-    dropdown lets you check any of them.* A terminal H needs more hops
-    to "see" the whole molecule than a central C does, but the
-    machinery (and the depth = hops rule) is the same for every atom.
-    """)
-    return
-
-
 @app.cell(hide_code=True)
 def _(basis, env, go, num_basis, palette, r_demo, torch):
     r_demo_t = torch.tensor([r_demo.value])
@@ -798,6 +599,205 @@ def _(mo):
     small *relative* to the system (thousands of atoms in a box, cutoff
     still ≈ 5 Å) — and that's where stacking layers genuinely earns its
     keep.
+    """)
+    return
+
+
+@app.cell
+def _(atoms, build_graph, torch):
+    import numpy as np
+    from ase.data import chemical_symbols
+
+    # Tighter graph for the topology demo: at the main cutoff (~5 Å) ethanol is
+    # fully connected and depth 1 already sees everything, so stacking layers
+    # cannot grow the receptive field. With demo_cutoff=1.6 Å we get ethanol's
+    # covalent-bond graph (C–H, C–C, C–O, O–H) — sparse, but still connected
+    # through the central C–C bond.
+    demo_cutoff = 1.6
+    graph_sparse = build_graph(atoms, cutoff=demo_cutoff)
+
+    n = graph_sparse.n_atoms
+    adjacency = torch.zeros(n, n)
+    adjacency[graph_sparse.edge_index[0], graph_sparse.edge_index[1]] = 1.0
+    # Self-loops: every atom is trivially reachable from itself at depth 0.
+    adjacency_self = adjacency + torch.eye(n)
+
+    # reach[k][i, j] = 1 iff atom j is reachable from atom i in <= k hops.
+    # Boolean matrix power: (A + I)^k > 0.
+    reach = [torch.eye(n)]  # depth 0: identity
+    power = adjacency_self.clone()
+    for _depth in range(1, 4):
+        reach.append((power > 0).float())  # depth 1..3
+        power = ((power @ adjacency_self) > 0).float()
+
+    # Element + index labels for axis / dropdown: "C[0]", "H[3]", ...
+    atom_labels = [f"{chemical_symbols[int(graph_sparse.z[i])]}[{i}]" for i in range(n)]
+    return atom_labels, demo_cutoff, graph_sparse, np, reach
+
+
+@app.cell(hide_code=True)
+def _(atom_labels, mo):
+    source_atom = mo.ui.dropdown(
+        options={label: i for i, label in enumerate(atom_labels)},
+        value=atom_labels[0],
+        label="source atom (receptive-field viewer)",
+    )
+    source_atom
+    return (source_atom,)
+
+
+@app.cell(hide_code=True)
+def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
+    from tinymlip.viz import element_color, element_radius
+
+    source_idx = source_atom.value
+    source_label = atom_labels[source_idx]
+
+    # depth_of_atom[j] = smallest k in {0, 1, 2, 3} such that j is reachable
+    # from source_idx in <= k hops; -1 if unreached within depth 3.
+    depth_of_atom = [-1] * graph_sparse.n_atoms
+    for j in range(graph_sparse.n_atoms):
+        for k in range(4):
+            if reach[k][source_idx, j] > 0:
+                depth_of_atom[j] = k
+                break
+
+    # Color each atom by its depth. Unreached atoms keep their CPK color
+    # (faded out via opacity); reached atoms get a bold gold-or-green fill so
+    # the receptive field is the dominant visual.
+    depth_color = {
+        0: "#d4a017",  # source: gold
+        1: "#2ca02c",  # depth 1: solid green
+        2: "#7ec97e",  # depth 2: medium green
+        3: "#cce8cc",  # depth 3: pale green
+    }
+    atom_fill = [
+        depth_color[d] if d >= 0 else element_color(int(graph_sparse.z[j]))
+        for j, d in enumerate(depth_of_atom)
+    ]
+
+    # Bond lines (one direction only).
+    bond_x, bond_y, bond_z = [], [], []
+    src_s, dst_s = graph_sparse.edge_index
+    for s_i, d_i in zip(src_s.tolist(), dst_s.tolist(), strict=True):
+        if s_i < d_i:
+            bond_x += [float(graph_sparse.pos[s_i, 0]), float(graph_sparse.pos[d_i, 0]), None]
+            bond_y += [float(graph_sparse.pos[s_i, 1]), float(graph_sparse.pos[d_i, 1]), None]
+            bond_z += [float(graph_sparse.pos[s_i, 2]), float(graph_sparse.pos[d_i, 2]), None]
+
+    pos_3d = graph_sparse.pos.numpy()
+    z_3d = graph_sparse.z.numpy()
+
+    fig_3d = go.Figure()
+    fig_3d.add_trace(
+        go.Scatter3d(
+            x=bond_x,
+            y=bond_y,
+            z=bond_z,
+            mode="lines",
+            line=dict(color="#888", width=4),
+            showlegend=False,
+            hoverinfo="skip",
+            name="bonds",
+        )
+    )
+    fig_3d.add_trace(
+        go.Scatter3d(
+            x=pos_3d[:, 0],
+            y=pos_3d[:, 1],
+            z=pos_3d[:, 2],
+            mode="markers+text",
+            marker=dict(
+                size=[element_radius(int(z)) * 18 for z in z_3d],
+                color=atom_fill,
+                opacity=1.0,  # per-atom opacity below via separate channels won't
+                # render reliably in 3d; we instead fade unreached
+                # atoms by mixing their CPK color toward white.
+                line=dict(color="#222", width=1),
+            ),
+            text=atom_labels,
+            textposition="top center",
+            textfont=dict(size=11, color="#111"),
+            hoverinfo="text",
+            showlegend=False,
+            name="atoms",
+        )
+    )
+
+    # Faux legend: one invisible trace per depth so the depth ramp shows up in
+    # the legend.
+    for d in (0, 1, 2, 3):
+        label = "source" if d == 0 else f"depth {d}"
+        fig_3d.add_trace(
+            go.Scatter3d(
+                x=[None],
+                y=[None],
+                z=[None],
+                mode="markers",
+                marker=dict(size=10, color=depth_color[d]),
+                name=label,
+                showlegend=True,
+            )
+        )
+
+    fig_3d.update_layout(
+        title=(f"Ethanol — receptive field of {source_label} (demo cutoff = {demo_cutoff} Å)"),
+        scene=dict(
+            xaxis=dict(visible=False),
+            yaxis=dict(visible=False),
+            zaxis=dict(visible=False),
+            aspectmode="data",
+            dragmode="turntable",
+        ),
+        height=420,
+        margin=dict(l=0, r=0, t=40, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.05, x=0.5, xanchor="center"),
+    )
+    fig_3d
+    return
+
+
+@app.cell(hide_code=True)
+def _(atom_labels, demo_cutoff, go, graph_sparse, np, reach, source_atom):
+    source_idx_hm = source_atom.value
+    source_label_hm = atom_labels[source_idx_hm]
+
+    # Rows = depths 1..3, columns = atoms. Row k shows which atoms are reachable
+    # from the selected source in <= k hops.
+    rows = [reach[k][source_idx_hm].numpy() for k in (1, 2, 3)]
+    heat = np.stack(rows, axis=0)  # [3, n_atoms]
+
+    fig_field = go.Figure(
+        data=go.Heatmap(
+            z=heat,
+            x=atom_labels,
+            y=[f"depth {d}" for d in (1, 2, 3)],
+            colorscale=[[0.0, "#f4f4f8"], [1.0, "#2ca02c"]],
+            showscale=False,
+            xgap=2,
+            ygap=2,
+        )
+    )
+    fig_field.update_layout(
+        title=(
+            f"Receptive field of {source_label_hm} "
+            f"(demo cutoff = {demo_cutoff} Å, {graph_sparse.n_edges} edges)"
+        ),
+        xaxis_title="input atom",
+        yaxis_title="depth k",
+        height=320,
+    )
+    fig_field
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    *Every atom has its own receptive field of the same depth — the
+    dropdown lets you check any of them.* A terminal H needs more hops
+    to "see" the whole molecule than a central C does, but the
+    machinery (and the depth = hops rule) is the same for every atom.
     """)
     return
 
