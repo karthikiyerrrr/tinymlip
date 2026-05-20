@@ -1,7 +1,7 @@
 """Forces via autograd.
 
-The central architecture rule of this repo (CLAUDE.md): forces are *always*
-derived from the energy via autograd, never predicted by a separate head.
+A central architecture rule of this repo: forces are *always* derived from
+the energy via autograd, never predicted by a separate head.
 This guarantees they are conservative — the line integral of F around any
 closed loop in position space is zero, so MD trajectories conserve energy
 in NVE ensembles. A separately predicted force field has no such guarantee.

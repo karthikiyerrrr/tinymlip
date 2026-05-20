@@ -3,7 +3,7 @@
 `load_rmd17` returns a polars metadata table paired with a list of ASE Atoms
 objects (one per frame). The two views are deliberately separated: polars
 handles the tabular metadata (energies, splits, indexing), and atomistic
-information (positions, numbers, forces) stays in ASE Atoms — see CLAUDE.md.
+information (positions, numbers, forces) stays in ASE Atoms.
 
 `to_torch_dataset` converts an `RMD17Bundle` to a `torch.utils.data.Dataset`
 for the training notebooks. The two functions are siblings; the adapter does

@@ -1,7 +1,7 @@
 """Message-passing interaction layers.
 
 Two sibling classes (no shared base — the comparison between invariant and
-equivariant message passing IS the lesson, per CLAUDE.md):
+equivariant message passing IS the lesson):
 
   - InvariantInteraction:  SchNet-style continuous-filter convolution.
                            Based on Schütt et al. 2018.

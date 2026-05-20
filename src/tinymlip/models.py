@@ -1,7 +1,7 @@
 """Energy models that compose tinymlip's interaction layers.
 
 Two sibling classes (no shared base — the comparison between invariant and
-equivariant models IS the lesson, per CLAUDE.md):
+equivariant models IS the lesson):
 
   - InvariantMPNN:  SchNet-based. Scalar features per atom.
                     Based on Schütt et al. 2018.
