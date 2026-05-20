@@ -105,6 +105,7 @@ def test_to_torch_dataset_shapes_and_dtypes(rmd17_mini_root: Path) -> None:
 def test_make_collate_returns_batched_dict(ethanol_atoms):
     """make_collate stitches per-frame dicts into a single batched payload."""
     import torch
+
     from tinymlip.data import make_collate
     from tinymlip.graph import AtomGraph
 
