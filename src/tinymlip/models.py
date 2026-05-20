@@ -73,12 +73,17 @@ class InvariantMPNN(nn.Module):
         self.readout = AtomicReadout(hidden_dim)
 
     def forward(self, graph: AtomGraph) -> Tensor:
-        # returns scalar energy []
+        # Single graph (batch=None): returns scalar []  — preserves nb 03 behavior.
+        # Batched graph (batch=[N] long): returns [B] per-frame energies.
         x = self.embed(graph.z)  # [N, F]
         for layer in self.interactions:
             x = layer(x, graph)  # [N, F]
         per_atom_e = self.readout(x).squeeze(-1)  # [N]
-        return per_atom_e.sum()  # []
+        if graph.batch is None:
+            return per_atom_e.sum()  # []
+        n_frames = int(graph.batch.max()) + 1
+        out = torch.zeros(n_frames, dtype=per_atom_e.dtype, device=per_atom_e.device)
+        return out.index_add_(0, graph.batch, per_atom_e)  # [B]
 
 
 class EquivariantMPNN(nn.Module):
@@ -119,6 +124,8 @@ class EquivariantMPNN(nn.Module):
         self.readout = AtomicReadout(hidden_dim)
 
     def forward(self, graph: AtomGraph) -> Tensor:
+        # Single graph (batch=None): returns scalar []  — preserves nb 03 behavior.
+        # Batched graph (batch=[N] long): returns [B] per-frame energies.
         s = self.embed(graph.z)  # [N, F]
         v = torch.zeros(
             graph.n_atoms,
@@ -130,4 +137,8 @@ class EquivariantMPNN(nn.Module):
         for layer in self.interactions:
             s, v = layer(s, v, graph)
         per_atom_e = self.readout(s).squeeze(-1)  # [N]
-        return per_atom_e.sum()  # []
+        if graph.batch is None:
+            return per_atom_e.sum()  # []
+        n_frames = int(graph.batch.max()) + 1
+        out = torch.zeros(n_frames, dtype=per_atom_e.dtype, device=per_atom_e.device)
+        return out.index_add_(0, graph.batch, per_atom_e)  # [B]

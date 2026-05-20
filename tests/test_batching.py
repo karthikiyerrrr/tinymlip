@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from tinymlip.graph import build_graph, collate_graphs
+from tinymlip.models import EquivariantMPNN, InvariantMPNN
 
 
 def _three_ethanols(ethanol_atoms):
@@ -52,3 +53,34 @@ def test_collate_no_cross_edges(ethanol_atoms):
     assert torch.equal(batched.batch[src], batched.batch[dst]), (
         "collate_graphs leaked an edge between two different frames"
     )
+
+
+@pytest.mark.parametrize("model_cls", [InvariantMPNN, EquivariantMPNN])
+def test_model_batched_equals_single(ethanol_atoms, model_cls):
+    """Per-frame energies from a batched forward must match unbatched forwards.
+
+    This is the structural correctness test for both:
+      - collate_graphs offsetting edge_index correctly, and
+      - the model's scatter-sum returning the right per-frame split.
+    """
+    torch.manual_seed(0)
+    cutoff = 5.0
+    model = model_cls(hidden_dim=16, num_basis=8, cutoff=cutoff, n_layers=2).double()
+
+    graphs = []
+    for shift in (0.0, 0.01, -0.01):
+        atoms = ethanol_atoms.copy()
+        atoms.set_positions(atoms.get_positions() + shift)
+        graphs.append(build_graph(atoms, cutoff=cutoff, dtype=torch.float64))
+
+    # Per-frame: 3 scalar energies.
+    with torch.no_grad():
+        e_singles = torch.stack([model(g) for g in graphs])  # [3]
+
+    # Batched: one [3] tensor.
+    batched = collate_graphs(graphs)
+    with torch.no_grad():
+        e_batched = model(batched)  # [3]
+
+    assert e_batched.shape == (3,)
+    assert torch.allclose(e_batched, e_singles, atol=1e-9)
