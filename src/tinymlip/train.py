@@ -27,11 +27,11 @@ from __future__ import annotations
 
 import ase
 import numpy as np
-import polars as pl  # noqa: F401
+import polars as pl
 import torch
 from torch import Tensor
 
-from tinymlip.forces import compute_forces  # noqa: F401
+from tinymlip.forces import compute_forces
 
 
 def fit_atomic_reference(
@@ -155,3 +155,125 @@ def energy_force_loss(
         "force_mae": float((pred_f - true_f).abs().mean().detach()),
     }
     return loss, metrics
+
+
+def _step(
+    model,
+    batch: dict[str, Tensor],
+    *,
+    shifts: dict[int, float],
+    w_e: float,
+    w_f: float,
+) -> tuple[Tensor, dict[str, float]]:
+    """Single forward pass: energy + autograd forces + weighted loss.
+
+    Used by both train_one_epoch (with backward) and evaluate (without).
+    pos.requires_grad_ is set BEFORE the forward so compute_forces works.
+
+    We call .sum() on the per-frame energies before passing to compute_forces
+    because compute_forces wants a scalar; per-frame forces are recovered
+    correctly because the disjoint-union batching guarantees no cross-frame
+    edges, so each atom's force only depends on its own frame's energy.
+    """
+    graph = batch["graph"]
+    graph.pos.requires_grad_(True)
+
+    pred_energy_residual = model(graph)  # [B] (model only learns residuals)
+    pred_forces = compute_forces(pred_energy_residual.sum(), graph.pos)  # [N_total, 3]
+
+    # Subtract the atomic reference from the true energy so model targets are
+    # the small residuals matching the model's output.
+    ref = apply_atomic_reference(graph.z, graph.batch, shifts).to(batch["energy"].dtype)
+    true_residual = batch["energy"] - ref
+
+    loss, metrics = energy_force_loss(
+        pred_energy_residual,
+        true_residual,
+        pred_forces,
+        batch["forces"],
+        batch["n_atoms"],
+        w_e=w_e,
+        w_f=w_f,
+    )
+    return loss, metrics
+
+
+def train_one_epoch(
+    model,
+    loader,
+    optimizer,
+    *,
+    shifts: dict[int, float],
+    w_e: float = 1.0,
+    w_f: float = 100.0,
+) -> dict[str, float]:
+    """One pass over `loader` with parameter updates. Returns mean metrics."""
+    model.train()
+    sums = {"loss": 0.0, "energy_mae": 0.0, "force_mae": 0.0}
+    n_batches = 0
+    for batch in loader:
+        optimizer.zero_grad()
+        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f)
+        loss.backward()
+        optimizer.step()
+        for k in sums:
+            sums[k] += metrics[k]
+        n_batches += 1
+    return {k: v / max(n_batches, 1) for k, v in sums.items()}
+
+
+def evaluate(
+    model,
+    loader,
+    *,
+    shifts: dict[int, float],
+    w_e: float = 1.0,
+    w_f: float = 100.0,
+) -> dict[str, float]:
+    """One pass over `loader` without parameter updates. Returns mean metrics.
+
+    We do NOT use torch.no_grad() here: forces require autograd through pos.
+    Model parameter grads still flow during this pass, but we never call
+    optimizer.step(), so nothing actually gets updated. The cost is small for
+    rMD17-sized molecules.
+    """
+    model.eval()
+    sums = {"loss": 0.0, "energy_mae": 0.0, "force_mae": 0.0}
+    n_batches = 0
+    for batch in loader:
+        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f)
+        for k in sums:
+            sums[k] += metrics[k]
+        n_batches += 1
+    return {k: v / max(n_batches, 1) for k, v in sums.items()}
+
+
+def train(
+    model,
+    train_loader,
+    val_loader,
+    *,
+    n_epochs: int,
+    lr: float,
+    w_e: float = 1.0,
+    w_f: float = 100.0,
+    shifts: dict[int, float],
+) -> pl.DataFrame:
+    """Train `model` for `n_epochs` and return a polars run-log DataFrame.
+
+    Columns: epoch (int), split (str: "train"/"val"), loss, energy_mae, force_mae.
+    Two rows per epoch (one per split). Caller plots straight from this frame.
+
+    Optimizer is Adam(lr). LR scheduling, EMA, gradient clipping are deliberately
+    omitted for clarity — production tricks belong in a follow-up.
+    """
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    rows: list[dict[str, float | int | str]] = []
+    for epoch in range(n_epochs):
+        train_metrics = train_one_epoch(
+            model, train_loader, optimizer, shifts=shifts, w_e=w_e, w_f=w_f
+        )
+        val_metrics = evaluate(model, val_loader, shifts=shifts, w_e=w_e, w_f=w_f)
+        rows.append({"epoch": epoch, "split": "train", **train_metrics})
+        rows.append({"epoch": epoch, "split": "val", **val_metrics})
+    return pl.DataFrame(rows)

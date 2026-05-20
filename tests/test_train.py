@@ -100,3 +100,85 @@ def test_energy_force_loss_components_combine_with_weights():
     # MAE: per-atom energy MAE = 0.1; force MAE = 2.0.
     assert abs(metrics["energy_mae"] - 0.1) < 1e-6
     assert abs(metrics["force_mae"] - 2.0) < 1e-6
+
+
+def test_train_runs_two_epochs_returns_polars_history(ethanol_atoms):
+    """Smoke test the full loop: 2 epochs on a tiny synthetic batch.
+
+    What this guards:
+      - train returns a polars DataFrame with the expected columns.
+      - both split rows (train, val) appear in the history.
+      - loss is finite after the run.
+
+    What this deliberately does NOT check:
+      - whether the loss went down (brittle on 2 epochs / random init).
+    """
+    import polars as pl
+    from torch.utils.data import DataLoader
+
+    from tinymlip.data import make_collate
+    from tinymlip.models import InvariantMPNN
+    from tinymlip.train import fit_atomic_reference, train
+
+    torch.manual_seed(0)
+
+    # Build a tiny dataset: 4 ethanol frames with synthetic energies/forces.
+    # We do not need the labels to be physically right — we just need the loop
+    # to execute end-to-end and update parameters.
+    samples = []
+    for _ in range(4):
+        atoms = ethanol_atoms.copy()
+        atoms.set_positions(atoms.get_positions() + 0.01 * torch.randn(9, 3).numpy())
+        samples.append(
+            {
+                "z": torch.as_tensor(atoms.numbers, dtype=torch.long),
+                "pos": torch.as_tensor(atoms.positions, dtype=torch.float32),
+                "energy": torch.tensor(-4209.0, dtype=torch.float32),
+                "forces": torch.zeros(9, 3, dtype=torch.float32),
+                "frame_idx": torch.tensor(0, dtype=torch.long),
+            }
+        )
+
+    class _ListDataset(torch.utils.data.Dataset):
+        def __init__(self, items):
+            self.items = items
+
+        def __len__(self):
+            return len(self.items)
+
+        def __getitem__(self, i):
+            return self.items[i]
+
+    ds = _ListDataset(samples)
+    collate = make_collate(cutoff=5.0)
+    train_loader = DataLoader(ds, batch_size=2, shuffle=False, collate_fn=collate)
+    val_loader = DataLoader(ds, batch_size=2, shuffle=False, collate_fn=collate)
+
+    structures = [
+        Atoms(numbers=s["z"].numpy(), positions=s["pos"].numpy())
+        for s in samples
+    ]
+    energies = torch.stack([s["energy"] for s in samples]).numpy()
+    shifts = fit_atomic_reference(structures, energies)
+
+    model = InvariantMPNN(hidden_dim=16, num_basis=8, cutoff=5.0, n_layers=2)
+
+    history = train(
+        model,
+        train_loader,
+        val_loader,
+        n_epochs=2,
+        lr=1e-3,
+        w_e=1.0,
+        w_f=100.0,
+        shifts=shifts,
+    )
+
+    assert isinstance(history, pl.DataFrame)
+    assert set(history.columns) == {"epoch", "split", "loss", "energy_mae", "force_mae"}
+    # 2 epochs * 2 splits = 4 rows.
+    assert history.height == 4
+    splits = set(history["split"].to_list())
+    assert splits == {"train", "val"}
+    # All losses finite.
+    assert all(np.isfinite(v) for v in history["loss"].to_list())
