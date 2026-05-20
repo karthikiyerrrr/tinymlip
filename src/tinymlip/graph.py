@@ -29,8 +29,9 @@ class AtomGraph:
     recompute `edge_vec` from `pos` inside their forward pass — `pos` must be
     the autograd leaf, not `edge_vec`. See models.py when it lands.
 
-    A `.to_pyg()` adapter (returns `torch_geometric.data.Data`) is deferred to
-    notebook 04, when batched training is introduced.
+    Batching: `collate_graphs([g1, g2, ...])` builds the disjoint union of
+    several AtomGraphs into one, populating `batch` so per-frame readouts can
+    scatter-sum correctly. Used by notebook 04 onwards.
     """
 
     z: torch.Tensor  # [N]    long       — atomic numbers
@@ -134,4 +135,65 @@ def build_graph(
         cutoff=float(cutoff),
         cell=None,
         pbc=(False, False, False),
+    )
+
+
+def collate_graphs(graphs: list[AtomGraph]) -> AtomGraph:
+    """Disjoint-union a list of AtomGraphs into one batched AtomGraph.
+
+    Standard MLIP batching trick: stack the per-frame graphs into one large
+    graph with the union of nodes and edges, and add a `batch` vector that
+    records which frame each atom belongs to. Because each graph's edges only
+    connect its own atoms, the union has no edges crossing between frames —
+    so a single forward pass through any of the layers in `tinymlip.layers`
+    handles all frames at once.
+
+    Args:
+        graphs: list of AtomGraph (single-frame, batch is None). Must share
+            `cutoff`. PBC and `cell` are not supported here yet (PBC arrives
+            with notebook 06).
+
+    Returns:
+        A new AtomGraph with concatenated `z`, `pos`, `edge_vec`, `edge_dist`;
+        `edge_index` offset per-frame so all indices live in [0, sum_n_atoms);
+        and a `batch` tensor of shape [sum_n_atoms] mapping atom -> frame.
+    """
+    if not graphs:
+        raise ValueError("collate_graphs requires at least one graph")
+    cutoff = graphs[0].cutoff
+    if any(g.cutoff != cutoff for g in graphs):
+        raise ValueError("collate_graphs: all graphs must share the same cutoff")
+    if any(any(g.pbc) for g in graphs):
+        raise NotImplementedError("collate_graphs does not support PBC yet (nb 06)")
+
+    z = torch.cat([g.z for g in graphs], dim=0)  # [sum_N]
+    pos = torch.cat([g.pos for g in graphs], dim=0)  # [sum_N, 3]
+    edge_vec = torch.cat([g.edge_vec for g in graphs], dim=0)  # [sum_E, 3]
+    edge_dist = torch.cat([g.edge_dist for g in graphs], dim=0)  # [sum_E]
+
+    # Offset each graph's edge_index by the running atom count so all indices
+    # point inside the concatenated `z` / `pos`. (Edges still only connect
+    # atoms inside their own frame — that's what makes the union "disjoint".)
+    edge_indices: list[torch.Tensor] = []
+    batch_pieces: list[torch.Tensor] = []
+    offset = 0
+    for frame_id, g in enumerate(graphs):
+        edge_indices.append(g.edge_index + offset)  # [2, E_k]
+        batch_pieces.append(
+            torch.full((g.n_atoms,), frame_id, dtype=torch.long, device=g.z.device)
+        )
+        offset += g.n_atoms
+    edge_index = torch.cat(edge_indices, dim=1)  # [2, sum_E]
+    batch = torch.cat(batch_pieces, dim=0)  # [sum_N]
+
+    return AtomGraph(
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_vec=edge_vec,
+        edge_dist=edge_dist,
+        cutoff=cutoff,
+        cell=None,
+        pbc=(False, False, False),
+        batch=batch,
     )
