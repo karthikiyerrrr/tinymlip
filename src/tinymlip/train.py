@@ -105,3 +105,53 @@ def apply_atomic_reference(
     n_frames = int(batch.max()) + 1
     out = torch.zeros(n_frames, dtype=per_atom_shift.dtype, device=per_atom_shift.device)
     return out.index_add_(0, batch, per_atom_shift)
+
+
+def energy_force_loss(
+    pred_e: Tensor,
+    true_e: Tensor,
+    pred_f: Tensor,
+    true_f: Tensor,
+    n_atoms: Tensor,
+    *,
+    w_e: float = 1.0,
+    w_f: float = 100.0,
+) -> tuple[Tensor, dict[str, float]]:
+    """Weighted per-atom energy MSE + force MSE, with MAEs returned for logging.
+
+    L = w_e * MSE(E_pred / N, E_true / N) + w_f * MSE(F_pred, F_true)
+
+    Per-atom normalization on energy makes the loss scale-free across system
+    sizes — important once nb 06 mixes 9-atom ethanols with larger crystals.
+    The default w_f=100 balances per-component magnitudes: post-shift energies
+    are ~1 kcal/mol while force components are ~50 kcal/mol/Å.
+
+    Args:
+        pred_e: [B] predicted energies (already shifted — i.e. residuals).
+        true_e: [B] target energies (already shifted by `apply_atomic_reference`).
+        pred_f: [N_total, 3] predicted forces (concatenated across the batch).
+        true_f: [N_total, 3] target forces (same layout).
+        n_atoms: [B] long, per-frame atom count for per-atom normalization.
+        w_e, w_f: scalar weights on the energy and force terms.
+
+    Returns:
+        (loss, metrics_dict) where metrics_dict has the keys:
+            loss         — the scalar loss as a float (a `.item()` copy).
+            energy_mae   — mean absolute error on PER-ATOM energy (same units as
+                           pred_e / n_atoms — kcal/mol/atom for rMD17).
+            force_mae    — mean absolute error on force components.
+    """
+    per_atom_pred = pred_e / n_atoms.to(pred_e.dtype)
+    per_atom_true = true_e / n_atoms.to(true_e.dtype)
+
+    energy_mse = ((per_atom_pred - per_atom_true) ** 2).mean()
+    force_mse = ((pred_f - true_f) ** 2).mean()
+
+    loss = w_e * energy_mse + w_f * force_mse
+
+    metrics = {
+        "loss": float(loss.detach()),
+        "energy_mae": float((per_atom_pred - per_atom_true).abs().mean().detach()),
+        "force_mae": float((pred_f - true_f).abs().mean().detach()),
+    }
+    return loss, metrics
