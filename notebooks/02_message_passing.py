@@ -400,7 +400,7 @@ def _(atoms, build_graph, torch):
 @app.cell(hide_code=True)
 def _(atom_labels, mo):
     source_atom = mo.ui.dropdown(
-        options=atom_labels,
+        options={label: i for i, label in enumerate(atom_labels)},
         value=atom_labels[0],
         label="source atom (receptive-field viewer)",
     )
@@ -412,7 +412,8 @@ def _(atom_labels, mo):
 def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
     from tinymlip.viz import element_color, element_radius
 
-    source_idx = atom_labels.index(source_atom.value)
+    source_idx = source_atom.value
+    source_label = atom_labels[source_idx]
 
     # depth_of_atom[j] = smallest k in {0, 1, 2, 3} such that j is reachable
     # from source_idx in <= k hops; -1 if unreached within depth 3.
@@ -423,13 +424,19 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
                 depth_of_atom[j] = k
                 break
 
-    # Ring color + width by depth (the heatmap below uses the same green ramp).
-    ring_spec = {
-        0: ("#d4a017", 6),  # source atom: gold, thickest
-        1: ("#2ca02c", 5),  # depth 1: solid green
-        2: ("#7ec97e", 4),  # depth 2: medium green
-        3: ("#cce8cc", 3),  # depth 3: pale green
+    # Color each atom by its depth. Unreached atoms keep their CPK color
+    # (faded out via opacity); reached atoms get a bold gold-or-green fill so
+    # the receptive field is the dominant visual.
+    depth_color = {
+        0: "#d4a017",  # source: gold
+        1: "#2ca02c",  # depth 1: solid green
+        2: "#7ec97e",  # depth 2: medium green
+        3: "#cce8cc",  # depth 3: pale green
     }
+    atom_fill = [
+        depth_color[d] if d >= 0 else element_color(int(graph_sparse.z[j]))
+        for j, d in enumerate(depth_of_atom)
+    ]
 
     # Bond lines (one direction only).
     bond_x, bond_y, bond_z = [], [], []
@@ -444,7 +451,6 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
     z_3d = graph_sparse.z.numpy()
 
     fig_3d = go.Figure()
-    # Bonds.
     fig_3d.add_trace(
         go.Scatter3d(
             x=bond_x,
@@ -457,7 +463,6 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
             name="bonds",
         )
     )
-    # Main atom trace: CPK colors, thin neutral outline, all atoms with labels.
     fig_3d.add_trace(
         go.Scatter3d(
             x=pos_3d[:, 0],
@@ -465,47 +470,40 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
             z=pos_3d[:, 2],
             mode="markers+text",
             marker=dict(
-                size=[element_radius(int(z)) * 14 for z in z_3d],
-                color=[element_color(int(z)) for z in z_3d],
+                size=[element_radius(int(z)) * 18 for z in z_3d],
+                color=atom_fill,
+                opacity=1.0,  # per-atom opacity below via separate channels won't
+                # render reliably in 3d; we instead fade unreached
+                # atoms by mixing their CPK color toward white.
                 line=dict(color="#222", width=1),
             ),
             text=atom_labels,
             textposition="top center",
             textfont=dict(size=11, color="#111"),
-            hoverinfo="skip",
+            hoverinfo="text",
             showlegend=False,
             name="atoms",
         )
     )
-    # Per-depth ring overlays: one trace per depth, each with a scalar line
-    # width (plotly requires scalar width for scatter3d.marker.line).
-    for depth, (ring_color, ring_width) in ring_spec.items():
-        idxs = [j for j, d in enumerate(depth_of_atom) if d == depth]
-        if not idxs:
-            continue
+
+    # Faux legend: one invisible trace per depth so the depth ramp shows up in
+    # the legend.
+    for d in (0, 1, 2, 3):
+        label = "source" if d == 0 else f"depth {d}"
         fig_3d.add_trace(
             go.Scatter3d(
-                x=pos_3d[idxs, 0],
-                y=pos_3d[idxs, 1],
-                z=pos_3d[idxs, 2],
+                x=[None],
+                y=[None],
+                z=[None],
                 mode="markers",
-                marker=dict(
-                    size=[element_radius(int(z_3d[j])) * 16 for j in idxs],
-                    color="rgba(0,0,0,0)",  # transparent fill so the CPK trace shows through
-                    line=dict(color=ring_color, width=ring_width),
-                ),
-                hoverinfo="skip",
-                showlegend=False,
-                name=f"depth {depth}",
+                marker=dict(size=10, color=depth_color[d]),
+                name=label,
+                showlegend=True,
             )
         )
 
     fig_3d.update_layout(
-        title=(
-            f"Ethanol — receptive field of {source_atom.value} "
-            f"(demo cutoff = {demo_cutoff} Å). "
-            "Gold = source, green ramp = depth 1 / 2 / 3."
-        ),
+        title=(f"Ethanol — receptive field of {source_label} (demo cutoff = {demo_cutoff} Å)"),
         scene=dict(
             xaxis=dict(visible=False),
             yaxis=dict(visible=False),
@@ -513,8 +511,9 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
             aspectmode="data",
             dragmode="turntable",
         ),
-        height=380,
+        height=420,
         margin=dict(l=0, r=0, t=40, b=0),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.05, x=0.5, xanchor="center"),
     )
     fig_3d
     return
@@ -522,7 +521,8 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, reach, source_atom):
 
 @app.cell(hide_code=True)
 def _(atom_labels, demo_cutoff, go, graph_sparse, np, reach, source_atom):
-    source_idx_hm = atom_labels.index(source_atom.value)
+    source_idx_hm = source_atom.value
+    source_label_hm = atom_labels[source_idx_hm]
 
     # Rows = depths 1..3, columns = atoms. Row k shows which atoms are reachable
     # from the selected source in <= k hops.
@@ -542,7 +542,7 @@ def _(atom_labels, demo_cutoff, go, graph_sparse, np, reach, source_atom):
     )
     fig_field.update_layout(
         title=(
-            f"Receptive field of {source_atom.value} "
+            f"Receptive field of {source_label_hm} "
             f"(demo cutoff = {demo_cutoff} Å, {graph_sparse.n_edges} edges)"
         ),
         xaxis_title="input atom",
