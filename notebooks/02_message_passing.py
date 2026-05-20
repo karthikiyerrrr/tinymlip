@@ -467,7 +467,7 @@ def _(cutoff, go, graph, num_basis, palette, torch):
         height=420,
     )
     fig_compare
-    return
+    return (InvariantInteraction,)
 
 
 @app.cell(hide_code=True)
@@ -513,6 +513,66 @@ def _(mo):
     you're seeing different *capacity profiles*, not different trained
     behavior.
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Check: permutation equivariance, end-to-end
+
+    nb01 promised that atom *order* is a labelling artifact — the physics
+    shouldn't change if we shuffle the atoms. The naive cell above and
+    the layer below are both pure gather/aggregate/(sum)/update, so by
+    construction the *set* of per-atom outputs is the same after a
+    relabel; only the rows are permuted. Easy enough to verify in code —
+    and once we sum across atoms in nb03 to get an energy, the
+    permutation drops out and the energy itself becomes invariant.
+    """)
+    return
+
+
+@app.cell
+def _(
+    InvariantInteraction,
+    atoms,
+    build_graph,
+    cutoff,
+    graph,
+    mo,
+    num_basis,
+    torch,
+):
+    from ase import Atoms
+
+    # Same seeded layer + features as the plot above — so any difference must
+    # come from the permutation itself, not different randomness.
+    torch.manual_seed(0)
+    perm_layer = InvariantInteraction(
+        hidden_dim=4,
+        num_basis=num_basis.value,
+        cutoff=cutoff.value,
+    )
+    torch.manual_seed(0)
+    features_in = torch.randn(graph.n_atoms, 4)
+
+    perm = torch.randperm(graph.n_atoms)
+    shuffled_atoms = Atoms(
+        numbers=atoms.numbers[perm.numpy()],
+        positions=atoms.positions[perm.numpy()],
+    )
+    graph_shuffled = build_graph(shuffled_atoms, cutoff=cutoff.value)
+
+    with torch.no_grad():
+        # Layer signature: forward(features, graph).
+        out_original = perm_layer(features_in, graph)
+        out_shuffled = perm_layer(features_in[perm], graph_shuffled)
+
+    # Equivariance: applying the permutation BEFORE the layer gives the same
+    # per-row output as applying it AFTER the layer.
+    holds = torch.allclose(out_shuffled, out_original[perm], atol=1e-6)
+    max_err = (out_shuffled - out_original[perm]).abs().max().item()
+    mo.md(f"permutation equivariance holds: **{holds}** (max abs diff = {max_err:.2e})")
     return
 
 
