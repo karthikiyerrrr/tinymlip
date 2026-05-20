@@ -3,7 +3,7 @@
 from tinymlip.basis import BesselBasis, CosineEnvelope
 from tinymlip.data import RMD17Bundle, load_rmd17, to_torch_dataset
 from tinymlip.forces import compute_forces
-from tinymlip.graph import AtomGraph, build_graph
+from tinymlip.graph import AtomGraph, build_graph, collate_graphs
 from tinymlip.layers import AtomicReadout, EquivariantInteraction, InvariantInteraction
 from tinymlip.models import EquivariantMPNN, InvariantMPNN
 from tinymlip.viz import (
@@ -23,6 +23,7 @@ __all__ = [
     "InvariantMPNN",
     "RMD17Bundle",
     "build_graph",
+    "collate_graphs",
     "compute_forces",
     "graph_stats_md",
     "load_rmd17",
