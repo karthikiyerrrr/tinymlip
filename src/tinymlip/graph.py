@@ -41,6 +41,7 @@ class AtomGraph:
     cutoff: float
     cell: torch.Tensor | None = None  # [3, 3] float; None for non-PBC
     pbc: tuple[bool, bool, bool] = (False, False, False)
+    batch: torch.Tensor | None = None  # [N] long — frame id per atom; None for a single graph
 
     @property
     def n_atoms(self) -> int:
@@ -51,13 +52,17 @@ class AtomGraph:
         return int(self.edge_index.shape[1])
 
     def __repr__(self) -> str:
-        # The dataclass-generated repr dumps every tensor (positions, edge_index,
-        # edge_vec, edge_dist). On anything bigger than a toy that is a wall of
-        # numbers in a notebook cell. Print a one-line summary instead; the
-        # individual fields are still accessible as attributes.
+        # The dataclass-generated repr dumps every tensor — wall of numbers in a
+        # notebook cell. Print a one-line summary instead; fields stay accessible.
+        if self.batch is None:
+            return (
+                f"AtomGraph(n_atoms={self.n_atoms}, n_edges={self.n_edges}, "
+                f"cutoff={self.cutoff:.2f}, pbc={any(self.pbc)})"
+            )
+        n_frames = int(self.batch.max()) + 1
         return (
-            f"AtomGraph(n_atoms={self.n_atoms}, n_edges={self.n_edges}, "
-            f"cutoff={self.cutoff:.2f}, pbc={any(self.pbc)})"
+            f"AtomGraph(n_frames={n_frames}, n_atoms={self.n_atoms}, "
+            f"n_edges={self.n_edges}, cutoff={self.cutoff:.2f}, pbc={any(self.pbc)})"
         )
 
 

@@ -274,3 +274,11 @@ def test_graph_stats_md_contains_size_and_degree_numbers():
     assert str(g.n_atoms) in text
     assert str(g.n_edges) in text
     assert "mean deg" in text
+
+
+def test_atomgraph_batch_field_defaults_none(ethanol_atoms):
+    """`batch` is optional. nb 03 path: a single-graph build must leave it None."""
+    from tinymlip.graph import build_graph
+
+    graph = build_graph(ethanol_atoms, cutoff=5.0)
+    assert graph.batch is None
