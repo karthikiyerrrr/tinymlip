@@ -23,7 +23,7 @@ The repo ships two models: an **invariant** message-passing model (based on SchN
 | 01 | `atoms_as_graphs.py` | Building a graph from an `Atoms` object; live cutoff slider with coupled 3D view and edge-distance histogram |
 | 02 | `message_passing.py` | Building a naive MPNN to a SchNet-style `InvariantInteraction` layer; reactive sliders for cutoff and `num_basis`; autograd-derived receptive-field heatmap |
 | 03 | `energy_and_forces.py` | Wrapping `InvariantInteraction` in `InvariantMPNN`; per-atom energy bar chart; force arrows from `torch.autograd.grad`; numerical-gradient check |
-| 04 | `training_invariant.py` | Training the invariant model (SchNet-based) on rMD17 |
+| 04 | `training_invariant.py` | Training `InvariantMPNN` on rMD17 with batched disjoint-union graphs and an energy + force-matching loss; per-element reference shift, learning curves, parity plots, and predicted-vs-true force arrows |
 | 05 | `equivariant_model.py` | Same dataset, equivariant model (PaiNN-based), side-by-side comparison |
 | 06 | `crystals_and_pbc.py` | Periodic boundary conditions, using the model as an ASE calculator |
 
