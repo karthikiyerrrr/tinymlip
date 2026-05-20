@@ -352,6 +352,17 @@ def _(basis, env, go, num_basis, palette, r_demo, torch):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    *This row of numbers is exactly what `filter_net` reads per edge.* It
+    maps the `num_basis` fingerprint values to a `hidden_dim` weight
+    vector — one weight per channel — and that vector scales the message
+    from sender to receiver.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(cutoff, go, graph, num_basis, palette, torch):
     from tinymlip import InvariantInteraction
 
