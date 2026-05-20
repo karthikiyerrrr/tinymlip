@@ -28,8 +28,8 @@ from __future__ import annotations
 import ase
 import numpy as np
 import polars as pl  # noqa: F401
-import torch  # noqa: F401
-from torch import Tensor  # noqa: F401
+import torch
+from torch import Tensor
 
 from tinymlip.forces import compute_forces  # noqa: F401
 
@@ -53,9 +53,7 @@ def fit_atomic_reference(
         the fit has no information about them.
     """
     if len(structures) != len(energies):
-        raise ValueError(
-            f"structures and energies disagree: {len(structures)} vs {len(energies)}"
-        )
+        raise ValueError(f"structures and energies disagree: {len(structures)} vs {len(energies)}")
     # Discover which atomic numbers actually appear in the data — keeps the
     # composition matrix as small as possible and avoids a singular system if
     # an element is absent.
@@ -70,7 +68,40 @@ def fit_atomic_reference(
     for i, atoms in enumerate(structures):
         for z in atoms.numbers:
             design_matrix[i, elements.index(int(z))] += 1.0
-    w, *_ = np.linalg.lstsq(
-        design_matrix, np.asarray(energies, dtype=np.float64), rcond=None
-    )
+    w, *_ = np.linalg.lstsq(design_matrix, np.asarray(energies, dtype=np.float64), rcond=None)
     return {int(z): float(w[i]) for i, z in enumerate(elements)}
+
+
+def apply_atomic_reference(
+    z: Tensor,
+    batch: Tensor | None,
+    shifts: dict[int, float],
+) -> Tensor:
+    """Compute the per-frame atomic-reference offset Σ_i shift[z_i].
+
+    This is the value you SUBTRACT from true energies before training, and ADD
+    to predicted energies at inference time (to get back to absolute units).
+
+    Args:
+        z:      [N] long — atomic numbers for all atoms.
+        batch:  [N] long mapping atom -> frame (or None for a single graph).
+        shifts: dict from atomic number to per-atom offset, as produced by
+                `fit_atomic_reference`.
+
+    Returns:
+        If `batch is None`: scalar Tensor — sum over all atoms.
+        Else:               [B] Tensor — per-frame sums via scatter-add.
+    """
+    # Lookup table indexed by Z. Sized large enough for any element seen.
+    z_max = int(z.max()) + 1
+    table = torch.zeros(z_max, dtype=torch.get_default_dtype(), device=z.device)
+    for atomic_number, shift in shifts.items():
+        if atomic_number < z_max:
+            table[atomic_number] = shift
+    per_atom_shift = table[z]  # [N]
+
+    if batch is None:
+        return per_atom_shift.sum()
+    n_frames = int(batch.max()) + 1
+    out = torch.zeros(n_frames, dtype=per_atom_shift.dtype, device=per_atom_shift.device)
+    return out.index_add_(0, batch, per_atom_shift)
