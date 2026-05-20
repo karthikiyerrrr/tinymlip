@@ -76,7 +76,6 @@ def _():
 
     torch.manual_seed(0)
     np.random.seed(0)
-
     return (
         DataLoader,
         InvariantMPNN,
@@ -95,7 +94,7 @@ def _():
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     lr = mo.ui.slider(
         steps=[1e-4, 3e-4, 1e-3, 3e-3, 1e-2],
@@ -112,7 +111,6 @@ def _(mo):
     )
 
     mo.vstack([lr, n_epochs, batch_size, w_f])
-
     return batch_size, lr, n_epochs, w_f
 
 
@@ -132,7 +130,6 @@ def _():
         "w_e": 1.0,
     }
     tiny
-
     return (tiny,)
 
 
@@ -186,7 +183,6 @@ def _(load_rmd17, mo, tiny):
         f"**val:** {len(val_structures)} frames &nbsp;·&nbsp; "
         f"**test:** {len(test_bundle.structures)} frames"
     )
-
     return test_bundle, train_meta, train_structures, val_meta, val_structures
 
 
@@ -247,7 +243,6 @@ def _(fit_atomic_reference, mo, np, train_meta, train_structures):
         f"kcal/mol (span {res_span:.4f})\n\n"
         f"Same data, four orders of magnitude smaller numbers."
     )
-
     return shifts, train_energies, train_residuals
 
 
@@ -282,7 +277,6 @@ def _(train_energies, train_residuals):
         bargap=0.05,
     )
     fig_shift
-
     return go, make_subplots
 
 
@@ -319,7 +313,6 @@ def _(build_graph, collate_graphs, mo, tiny, train_structures):
         f"`n_edges = {batched_demo.n_edges}`\n\n"
         f"**batch:** `{batched_demo.batch.tolist()}`"
     )
-
     return
 
 
@@ -398,7 +391,6 @@ def _(
         f"`val_loader`: **{len(val_loader)}** batches\n\n"
         f"`test_loader`: **{len(test_loader)}** batches"
     )
-
     return test_loader, train_loader, val_loader
 
 
@@ -456,7 +448,6 @@ def _(
         f"These should be large — the model is initialized randomly, so its energies "
         f"have no relation to ethanol. The training loop below should pull them down."
     )
-
     return
 
 
@@ -539,7 +530,6 @@ def _(
         f"`energy_mae={float(_final_val['energy_mae'][0]):.4f}` kcal/mol/atom, "
         f"`force_mae={float(_final_val['force_mae'][0]):.4f}` kcal/mol/Å"
     )
-
     return history, model
 
 
@@ -603,7 +593,6 @@ def _(go, history, make_subplots, pl):
         legend=dict(orientation="h", yanchor="bottom", y=-0.35),
     )
     fig_curves
-
     return
 
 
@@ -667,7 +656,6 @@ def _(
         f"per-atom `energy_mae = {test_energy_mae:.4f}` kcal/mol/atom &nbsp;·&nbsp; "
         f"`force_mae = {test_force_mae:.4f}` kcal/mol/Å"
     )
-
     return e_pred, e_true, f_pred, f_true, test_energy_mae, test_force_mae
 
 
@@ -754,7 +742,6 @@ def _(
     fig_parity.update_yaxes(title_text="predicted F component (kcal/mol/Å)", row=1, col=2)
     fig_parity.update_layout(height=420, margin=dict(l=10, r=10, t=60, b=40))
     fig_parity
-
     return
 
 
@@ -777,7 +764,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, test_bundle):
     frame_idx = mo.ui.slider(
         start=0,
@@ -796,7 +783,6 @@ def _(mo, test_bundle):
         show_value=True,
     )
     mo.vstack([frame_idx, arrow_scale])
-
     return arrow_scale, frame_idx
 
 
@@ -928,7 +914,6 @@ def _(
         legend=dict(orientation="h", yanchor="bottom", y=-0.05),
     )
     fig_arrows
-
     return
 
 
