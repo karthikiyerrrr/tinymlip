@@ -849,7 +849,7 @@ def _(
                 w=_scale * forces[:, 2],
                 anchor="tail",
                 sizemode="absolute",
-                sizeref=0.06,
+                sizeref=3.0 * _scale,
                 colorscale=[[0, color], [1, color]],
                 showscale=False,
                 hoverinfo="skip",
