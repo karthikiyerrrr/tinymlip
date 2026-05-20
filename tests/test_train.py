@@ -92,7 +92,13 @@ def test_energy_force_loss_components_combine_with_weights():
     f_true = torch.zeros(30, 3)
     f_pred = f_true + 2.0
     loss, metrics = energy_force_loss(
-        e_pred, e_true, f_pred, f_true, n_atoms, w_e=1.0, w_f=100.0,
+        e_pred,
+        e_true,
+        f_pred,
+        f_true,
+        n_atoms,
+        w_e=1.0,
+        w_f=100.0,
     )
     # Per-atom energy MSE = (0.1)**2 = 0.01.  Force MSE = 4.0.
     # Loss = 1.0 * 0.01 + 100.0 * 4.0 = 400.01.
@@ -154,10 +160,7 @@ def test_train_runs_two_epochs_returns_polars_history(ethanol_atoms):
     train_loader = DataLoader(ds, batch_size=2, shuffle=False, collate_fn=collate)
     val_loader = DataLoader(ds, batch_size=2, shuffle=False, collate_fn=collate)
 
-    structures = [
-        Atoms(numbers=s["z"].numpy(), positions=s["pos"].numpy())
-        for s in samples
-    ]
+    structures = [Atoms(numbers=s["z"].numpy(), positions=s["pos"].numpy()) for s in samples]
     energies = torch.stack([s["energy"] for s in samples]).numpy()
     shifts = fit_atomic_reference(structures, energies)
 

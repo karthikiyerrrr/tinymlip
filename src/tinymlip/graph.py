@@ -179,9 +179,7 @@ def collate_graphs(graphs: list[AtomGraph]) -> AtomGraph:
     offset = 0
     for frame_id, g in enumerate(graphs):
         edge_indices.append(g.edge_index + offset)  # [2, E_k]
-        batch_pieces.append(
-            torch.full((g.n_atoms,), frame_id, dtype=torch.long, device=g.z.device)
-        )
+        batch_pieces.append(torch.full((g.n_atoms,), frame_id, dtype=torch.long, device=g.z.device))
         offset += g.n_atoms
     edge_index = torch.cat(edge_indices, dim=1)  # [2, sum_E]
     batch = torch.cat(batch_pieces, dim=0)  # [sum_N]

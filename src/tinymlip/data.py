@@ -205,9 +205,7 @@ def make_collate(
             "graph": batched_graph,
             "energy": torch.stack([s["energy"] for s in samples]).to(dtype),
             "forces": torch.cat([s["forces"] for s in samples], dim=0).to(dtype),
-            "n_atoms": torch.tensor(
-                [int(s["z"].numel()) for s in samples], dtype=torch.long
-            ),
+            "n_atoms": torch.tensor([int(s["z"].numel()) for s in samples], dtype=torch.long),
         }
 
     return _collate

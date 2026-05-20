@@ -112,9 +112,7 @@ def test_make_collate_returns_batched_dict(ethanol_atoms):
     # Hand-build 3 per-frame dicts that look like _RMD17TorchDataset.__getitem__.
     samples = []
     for shift in (0.0, 0.01, -0.01):
-        pos = torch.as_tensor(
-            ethanol_atoms.get_positions() + shift, dtype=torch.float32
-        )
+        pos = torch.as_tensor(ethanol_atoms.get_positions() + shift, dtype=torch.float32)
         samples.append(
             {
                 "z": torch.as_tensor(ethanol_atoms.numbers, dtype=torch.long),
