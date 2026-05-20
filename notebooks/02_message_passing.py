@@ -237,6 +237,25 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    **Try this.** Set `num_basis = 4`, then `num_basis = 20`. At what point
+    do the basis functions start oscillating faster than the bond-length
+    structure of the molecule can resolve?
+
+    <details><summary>Expected answer</summary>
+
+    Around `num_basis ≈ 16–20` the bumps narrow below ~0.1 Å — finer than
+    the spacing between bond types (C–H ≈ 1.1 Å, C–C ≈ 1.5 Å, C–O ≈
+    1.4 Å). Beyond that you're adding capacity the data can't usefully
+    fill.
+
+    </details>
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(cutoff, num_basis, r_demo, torch):
     import plotly.graph_objects as go
 
@@ -325,6 +344,25 @@ def _(cutoff, mo):
     )
     r_demo
     return (r_demo,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    **Try this.** Drag `r_demo` to 1.1 Å (roughly a C–H bond length). Which
+    basis function lights up the strongest in the fingerprint below? Now
+    try 1.5 Å (a C–C bond).
+
+    <details><summary>Expected answer</summary>
+
+    Different basis functions peak at each distance — the "lit-up" bin
+    slides smoothly to the right as `r_demo` grows. That's the fingerprint
+    doing its job: distinct radial inputs produce distinct feature
+    patterns the downstream MLP can tell apart.
+
+    </details>
+    """)
+    return
 
 
 @app.cell(hide_code=True)
