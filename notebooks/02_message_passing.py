@@ -475,26 +475,39 @@ def _(mo):
     mo.md(r"""
     ### Reading this plot
 
-    Each colored curve is one of the hidden channels (we picked
-    `hidden_dim = 4`). Weights are normalized per channel, so **y = 1
-    is the naive MPNN baseline** — a channel that treats every edge the
-    same lives exactly on that line. Swings above 1 = "amplify messages
-    from this distance"; below 1 = "dampen them."
+    Each colored curve is one *channel* — i.e. one slot in the
+    `hidden_dim`-wide feature vector each atom carries. Here we picked
+    `hidden_dim = 4` so every channel is visible; real models use 64–256
+    channels and you'd never plot them all.
 
-    - **Channels can specialize.** Some curves swing well above and
-      below 1 — that channel learned to weigh nearby and far-away
-      neighbors differently. Others sit close to 1 — that channel
-      chose to ignore distance for this random init.
+    **It's a "continuous-filter convolution."** Useful CNN analogy: in an
+    image CNN, every pixel sees the same kernel `W` regardless of where
+    it sits — the kernel is a fixed lookup over discrete pixel offsets.
+    Here each edge gets its *own* weight `W(r_ij)`, computed on the fly
+    by a small network from the edge's distance. "Filter" because it
+    weights messages; "continuous" because `W` is a smooth function of
+    `r`, not a discrete lookup. SchNet (Schütt et al. 2018) is the
+    canonical reference.
+
+    Weights are normalized per channel, so **y = 1 is the naive MPNN
+    baseline** — a channel that treats every edge the same lives exactly
+    on that line. Swings above 1 = "amplify messages from this distance";
+    below 1 = "dampen them."
+
+    - **Channels can specialize.** Some curves swing well above and below
+      1 — that channel could weigh nearby and far-away neighbors
+      differently. Others sit close to 1 — that channel happens to ignore
+      distance for this random init.
     - **With random init the swings are subtle.** That's expected:
-      we haven't trained anything yet. The point isn't the magnitude
-      of the swings — it's that the *capacity* to swing is built in.
-      A trained model will push these curves into sharp, meaningful
-      shapes (one channel might lock onto C–H bond lengths around 1 Å,
-      another onto O–H distances, and so on).
+      nothing is trained yet. After training on real data, channels tend
+      to lock onto specific bond lengths — one channel might form a sharp
+      bump near 1.1 Å (C–H), another near 1.5 Å (C–C), another near
+      0.96 Å (O–H). The notebook 04 training run is where you'll watch
+      this happen.
     - **The curves are smooth.** That's geometry, not learning: the
-      Bessel × envelope basis is smooth in *r*, so any linear
-      combination of it is too. That smoothness is what keeps forces
-      well-defined when atoms cross the cutoff boundary.
+      Bessel × envelope basis is smooth in *r*, so any linear combination
+      of it is too. That smoothness is what keeps forces well-defined
+      when atoms cross the cutoff boundary.
 
     Move the cutoff or `num_basis` sliders and watch the shapes shift —
     you're seeing different *capacity profiles*, not different trained
