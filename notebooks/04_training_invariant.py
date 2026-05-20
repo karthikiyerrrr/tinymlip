@@ -201,10 +201,10 @@ def _(mo):
     The fit is a one-line linear regression:
 
     $$
-    E_{	ext{frame}} \;pprox\; \sum_{z} n_z(	ext{frame}) \cdot s_z,
+    E_{\text{frame}} \;\approx\; \sum_{z} n_z(\text{frame}) \cdot s_z,
     $$
 
-    where $n_z(	ext{frame})$ counts atoms of element $z$ in the frame and
+    where $n_z(\text{frame})$ counts atoms of element $z$ in the frame and
     $s_z$ is the per-element offset we learn. `fit_atomic_reference` solves
     this via `np.linalg.lstsq` and returns `{z: s_z}`.
     """)
@@ -325,9 +325,8 @@ def _(mo):
     term dominates:
 
     $$
-    \mathcal{L} \;=\; w_E \cdot \operatorname{MSE}\!\left(	frac{E_{	ext{pred}}}{N},\, 	frac{E_{	ext{true}}}{N}
-    ight)
-    \;+\; w_F \cdot \operatorname{MSE}\!igl(\mathbf{F}_{	ext{pred}},\, \mathbf{F}_{	ext{true}}igr).
+    \mathcal{L} \;=\; w_E \cdot \operatorname{MSE}\!\left(\frac{E_{\text{pred}}}{N},\, \frac{E_{\text{true}}}{N}\right)
+    \;+\; w_F \cdot \operatorname{MSE}\!\bigl(\mathbf{F}_{\text{pred}},\, \mathbf{F}_{\text{true}}\bigr).
     $$
 
     - **Per-atom normalization on energy.** Without it, larger systems contribute
