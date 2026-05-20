@@ -201,6 +201,42 @@ def _(mo):
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### The basis (and why Bessel)
+
+    Each detector is a *Bessel function* on $[0, r_\text{cut}]$:
+
+    $$
+    b_n(r) \;=\; \sqrt{\frac{2}{r_\text{cut}}}\;\frac{\sin(n\pi r / r_\text{cut})}{r}
+    $$
+
+    Two practical properties:
+
+    1. **Orthogonal on $[0, r_\text{cut}]$.** Each basis function captures
+       a distinct chunk of the radial range, so a small `num_basis` already
+       spans the distances we care about. Gaussian RBFs (SchNet's default)
+       work fine too; Bessel is a slightly more compact alternative
+       popularized by DimeNet (Klicpera et al. 2020).
+    2. **Smooth.** Linear combinations of Bessel × envelope stay smooth,
+       which (next notebook) is what keeps forces well-defined.
+
+    The dashed black curve in the next plot is the **cosine envelope**:
+
+    $$
+    f_\text{cut}(r) \;=\; \tfrac{1}{2}\bigl(\cos(\pi r / r_\text{cut}) + 1\bigr)
+    $$
+
+    It multiplies in on top of every basis function and goes smoothly to
+    zero at the cutoff — value *and* slope both zero. That's what lets
+    atoms drift across the cutoff boundary without causing jumps in the
+    energy or, more importantly, divergences in the force $-\partial E /
+    \partial r$ we'll compute in nb03.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(cutoff, num_basis, r_demo, torch):
     import plotly.graph_objects as go
 
