@@ -100,3 +100,35 @@ def test_to_torch_dataset_shapes_and_dtypes(rmd17_mini_root: Path) -> None:
     assert sample["frame_idx"].dtype == torch.long
     assert sample["frame_idx"].shape == ()
     assert int(sample["frame_idx"]) == int(bundle.meta["frame_idx"][0])
+
+
+def test_make_collate_returns_batched_dict(ethanol_atoms):
+    """make_collate stitches per-frame dicts into a single batched payload."""
+    import torch
+    from tinymlip.data import make_collate
+    from tinymlip.graph import AtomGraph
+
+    # Hand-build 3 per-frame dicts that look like _RMD17TorchDataset.__getitem__.
+    samples = []
+    for shift in (0.0, 0.01, -0.01):
+        pos = torch.as_tensor(
+            ethanol_atoms.get_positions() + shift, dtype=torch.float32
+        )
+        samples.append(
+            {
+                "z": torch.as_tensor(ethanol_atoms.numbers, dtype=torch.long),
+                "pos": pos,
+                "energy": torch.tensor(-4209.5, dtype=torch.float32),
+                "forces": torch.zeros(ethanol_atoms.get_global_number_of_atoms(), 3),
+                "frame_idx": torch.tensor(0, dtype=torch.long),
+            }
+        )
+
+    collate = make_collate(cutoff=5.0)
+    batch = collate(samples)
+
+    assert isinstance(batch["graph"], AtomGraph)
+    assert batch["graph"].batch is not None
+    assert batch["energy"].shape == (3,)
+    assert batch["forces"].shape == (3 * 9, 3)
+    assert torch.equal(batch["n_atoms"], torch.tensor([9, 9, 9], dtype=torch.long))

@@ -12,6 +12,7 @@ not re-read disk.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -21,6 +22,8 @@ import numpy as np
 import polars as pl
 import torch
 from torch.utils.data import Dataset
+
+from tinymlip.graph import build_graph, collate_graphs
 
 
 @dataclass(frozen=True)
@@ -163,3 +166,48 @@ def to_torch_dataset(bundle: RMD17Bundle, *, dtype: torch.dtype = torch.float32)
     The adapter does not re-read disk; it views the already-loaded bundle.
     """
     return _RMD17TorchDataset(bundle, dtype=dtype)
+
+
+def make_collate(
+    cutoff: float,
+    dtype: torch.dtype = torch.float32,
+) -> Callable[[list[dict[str, torch.Tensor]]], dict[str, torch.Tensor]]:
+    """Build a `collate_fn` for `torch.utils.data.DataLoader`.
+
+    The dataset yields per-frame dicts (see `_RMD17TorchDataset.__getitem__`);
+    `make_collate(cutoff)` returns a function that turns a list of them into a
+    single batched dict ready for the training loop:
+
+        {
+            "graph":   AtomGraph (batched, .batch populated),
+            "energy":  [B] float,
+            "forces":  [N_total, 3] float,   # concatenated across frames
+            "n_atoms": [B] long,              # for per-atom normalization in the loss
+        }
+
+    Graphs are built here (not in the dataset's __getitem__) so cutoff stays a
+    DataLoader-time parameter — sliders in the notebook can change it without
+    re-reading the dataset.
+    """
+
+    def _collate(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+        graphs = []
+        for sample in samples:
+            # Wrap (z, pos) back into an ASE Atoms so build_graph stays the one
+            # entry point for graph construction. Cheap — no I/O.
+            atoms = ase.Atoms(
+                numbers=sample["z"].cpu().numpy(),
+                positions=sample["pos"].cpu().numpy(),
+            )
+            graphs.append(build_graph(atoms, cutoff=cutoff, dtype=dtype))
+        batched_graph = collate_graphs(graphs)
+        return {
+            "graph": batched_graph,
+            "energy": torch.stack([s["energy"] for s in samples]).to(dtype),
+            "forces": torch.cat([s["forces"] for s in samples], dim=0).to(dtype),
+            "n_atoms": torch.tensor(
+                [int(s["z"].numel()) for s in samples], dtype=torch.long
+            ),
+        }
+
+    return _collate

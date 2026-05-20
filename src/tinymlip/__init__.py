@@ -1,7 +1,7 @@
 """tinymlip — an educational implementation of Machine Learning Interatomic Potentials."""
 
 from tinymlip.basis import BesselBasis, CosineEnvelope
-from tinymlip.data import RMD17Bundle, load_rmd17, to_torch_dataset
+from tinymlip.data import RMD17Bundle, load_rmd17, make_collate, to_torch_dataset
 from tinymlip.forces import compute_forces
 from tinymlip.graph import AtomGraph, build_graph, collate_graphs
 from tinymlip.layers import AtomicReadout, EquivariantInteraction, InvariantInteraction
@@ -27,6 +27,7 @@ __all__ = [
     "compute_forces",
     "graph_stats_md",
     "load_rmd17",
+    "make_collate",
     "plot_edge_distance_histogram",
     "plot_graph_3d",
     "to_torch_dataset",
