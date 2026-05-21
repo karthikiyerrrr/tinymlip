@@ -1112,6 +1112,49 @@ def _(
 
 
 @app.cell(hide_code=True)
+def _(
+    build_graph,
+    compute_forces,
+    frame_idx,
+    mo,
+    model,
+    np,
+    pl,
+    test_bundle,
+    tiny,
+):
+    mo.md("### Per-atom force agreement (current test frame)")
+
+    from ase.data import chemical_symbols as _chem_table
+
+    _atoms_table = test_bundle.structures[frame_idx.value]
+    _graph_table = build_graph(_atoms_table, cutoff=tiny["cutoff"])
+    _graph_table.pos.requires_grad_(True)
+    _pred_e_table = model(_graph_table)
+    _pred_f_table = compute_forces(_pred_e_table, _graph_table.pos).detach().numpy()
+    _true_f_table = _atoms_table.arrays["forces"]
+    _z_table = _graph_table.z.numpy()
+
+    _true_mag = np.linalg.norm(_true_f_table, axis=-1)
+    _pred_mag = np.linalg.norm(_pred_f_table, axis=-1)
+    # Guard against zero-magnitude force vectors (rare, but avoids 0/0).
+    _denom = np.clip(_true_mag * _pred_mag, 1e-12, None)
+    _cos = np.einsum("ij,ij->i", _true_f_table, _pred_f_table) / _denom
+    _component_mae = np.abs(_true_f_table - _pred_f_table).mean(axis=-1)
+
+    force_table = pl.DataFrame(
+        {
+            "atom": [f"{_chem_table[int(z)]}[{k}]" for k, z in enumerate(_z_table)],
+            "|F_true| (kcal/mol/Å)": np.round(_true_mag, 3),
+            "cos(F_pred, F_true)": np.round(_cos, 3),
+            "MAE_components (kcal/mol/Å)": np.round(_component_mae, 3),
+        }
+    )
+    force_table
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
     ## What we deferred (and where it goes)
