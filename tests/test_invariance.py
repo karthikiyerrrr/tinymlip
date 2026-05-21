@@ -68,3 +68,69 @@ def test_equivariant_mpnn_rotation_invariance(ethanol_atoms):
     assert torch.allclose(e_orig, e_rot, atol=1e-8), (
         f"EquivariantMPNN energy drifted under rotation: {e_orig.item()} vs {e_rot.item()}"
     )
+
+
+def test_pbc_translation_invariance_predicted_energy_unchanged():
+    """Translating ALL atoms by an arbitrary vector (not necessarily a lattice
+    vector) under PBC must leave the predicted energy unchanged."""
+    from ase import Atoms
+
+    a = 3.6
+    atoms = Atoms(
+        numbers=[29] * 4,
+        positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, a / 2, a / 2],
+            [a / 2, 0.0, a / 2],
+            [a / 2, a / 2, 0.0],
+        ],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    shifted = atoms.copy()
+    shifted.translate([0.37, -1.21, 0.04])  # arbitrary vector
+
+    g1 = build_graph(atoms, cutoff=4.0, dtype=torch.float64)
+    g2 = build_graph(shifted, cutoff=4.0, dtype=torch.float64)
+
+    torch.manual_seed(0)
+    model = EquivariantMPNN(n_layers=1, hidden_dim=8, num_basis=8, cutoff=4.0).double()
+    with torch.no_grad():
+        e1 = model(g1)
+        e2 = model(g2)
+    torch.testing.assert_close(e1, e2, atol=1e-6, rtol=1e-6)
+
+
+def test_pbc_permutation_invariance_predicted_energy_unchanged():
+    """Reordering atoms (and their per-atom data consistently) under PBC must
+    leave the predicted energy unchanged."""
+    from ase import Atoms
+
+    a = 3.6
+    atoms = Atoms(
+        numbers=[29, 29, 29, 29],
+        positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, a / 2, a / 2],
+            [a / 2, 0.0, a / 2],
+            [a / 2, a / 2, 0.0],
+        ],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    perm = np.array([2, 0, 3, 1])
+    permuted = Atoms(
+        numbers=np.asarray(atoms.numbers)[perm],
+        positions=atoms.positions[perm],
+        cell=atoms.cell.array,
+        pbc=True,
+    )
+    g1 = build_graph(atoms, cutoff=4.0, dtype=torch.float64)
+    g2 = build_graph(permuted, cutoff=4.0, dtype=torch.float64)
+
+    torch.manual_seed(0)
+    model = EquivariantMPNN(n_layers=1, hidden_dim=8, num_basis=8, cutoff=4.0).double()
+    with torch.no_grad():
+        e1 = model(g1)
+        e2 = model(g2)
+    torch.testing.assert_close(e1, e2, atol=1e-6, rtol=1e-6)
