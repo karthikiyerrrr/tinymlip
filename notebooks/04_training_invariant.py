@@ -154,6 +154,10 @@ def _(mo):
     with positions, atomic numbers, and per-atom forces. The energy lives
     in both — `meta["energy"]` for tabular access, `atoms.info["energy"]`
     for the per-frame view.
+
+    **Units.** rMD17 ships in kcal/mol for energies and kcal/mol/Å for force
+    components, and we keep those throughout the notebook. If you prefer eV
+    and eV/Å (common in the broader MLIP literature), multiply by ≈ 0.0434.
     """)
     return
 
