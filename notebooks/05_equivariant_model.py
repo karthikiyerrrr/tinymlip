@@ -59,7 +59,6 @@ def _():
     from tinymlip.viz import element_color
 
     return (
-        AtomGraph,
         DataLoader,
         EquivariantInteraction,
         EquivariantMPNN,
@@ -415,7 +414,7 @@ def _(EquivariantInteraction, ase_molecule, build_graph, pl, torch):
             ],
         }
     )
-    return F_vec, graph_vec, layer_vec, s0, v1
+    return F_vec, graph_vec, layer_vec, mol, s0, v1
 
 
 @app.cell(hide_code=True)
@@ -556,6 +555,12 @@ def _(mo):
     Then `index_add_` both to receivers (one scatter for the scalar
     aggregate $\Delta s$, one for the vector aggregate
     $\Delta v = \sum (m^{vv} + m^{vs})$).
+
+    **Reuse of nb02 machinery.** The radial filters $\phi^s, \phi^{vv},
+    \phi^{vs}$ all come from the same Bessel + cosine-envelope basis we
+    built in nb02 — the only difference is that `filter_net` now outputs
+    $3F$ channels and we split into three groups of $F$ with `.chunk(3,
+    dim=-1)`. One basis, three filters; the geometry is identical.
     """)
     return
 
@@ -606,10 +611,11 @@ def _(F_vec, graph_vec, layer_vec, pl, s0, torch):
 
 @app.cell
 def _(
-    AtomGraph,
+    build_graph,
     graph_vec,
     layer_vec,
     mo,
+    mol,
     np,
     pl,
     s0,
@@ -618,10 +624,9 @@ def _(
     v_after_msg,
     v_in,
 ):
-    # `EquivariantInteraction.forward` fuses message + update. We can't directly
-    # pull "message-only" out without copying the layer's first half, so we
-    # instead verify rotation equivariance of our hand-built version directly
-    # (the same property the real layer holds).
+    # Verify rotation equivariance of the hand-built message phase: rotate the
+    # molecule, rebuild the graph from scratch via build_graph (which recomputes
+    # edge_vec from rotated positions), rerun the message phase, compare.
     torch.manual_seed(7)
     R = torch.tensor(  # noqa: N806 — standard rotation notation
         [
@@ -632,19 +637,12 @@ def _(
         dtype=torch.float32,
     )
 
-    _pos_rot = graph_vec.pos @ R.T
-    _graph_rot = AtomGraph(
-        z=graph_vec.z,
-        pos=_pos_rot,
-        edge_index=graph_vec.edge_index,
-        edge_vec=_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]],
-        edge_dist=(_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]]).norm(
-            dim=-1
-        ),
-        cutoff=graph_vec.cutoff,
-    )
+    # Rotate the ASE atoms and rebuild the graph cleanly. build_graph
+    # recomputes edge_vec from positions, so the rotated graph reflects R.
+    _mol_rot = mol.copy()
+    _mol_rot.set_positions(mol.get_positions() @ R.numpy().T)
+    _graph_rot = build_graph(_mol_rot, cutoff=graph_vec.cutoff)
 
-    # Re-run the hand-built message phase on the rotated graph (v_in still zeros).
     src_r, dst_r = _graph_rot.edge_index
     edge_vec_r = _graph_rot.pos[dst_r] - _graph_rot.pos[src_r]
     r_r = edge_vec_r.norm(dim=-1).clamp(min=1e-6)
@@ -692,6 +690,12 @@ def _(
 def _(mo):
     mo.md(r"""
     ## 4. The update phase, as inset
+
+    Section 3 reconstructed the message phase from scratch to see the
+    three flavours of edge message. Here we run the **real fused**
+    `layer_vec(s, v, graph)` and reach into its modules (`layer_vec.U`,
+    `layer_vec.V`, `layer_vec.update_mlp`) to expose what the update
+    phase did. Same layer, different lens.
 
     The message phase moved information *along edges*. The update phase does
     a per-atom mixing of `s` and `v` to let scalars learn from vector
