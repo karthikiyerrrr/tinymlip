@@ -152,9 +152,7 @@ def test_equivariant_forces_match_numerical_gradient(ethanol_atoms):
     """
     torch.manual_seed(0)
     cutoff = 5.0
-    model = EquivariantMPNN(
-        hidden_dim=16, num_basis=8, cutoff=cutoff, n_layers=2
-    ).double()
+    model = EquivariantMPNN(hidden_dim=16, num_basis=8, cutoff=cutoff, n_layers=2).double()
 
     graph = build_graph(ethanol_atoms, cutoff=cutoff, dtype=torch.float64)
     graph.pos.requires_grad_(True)

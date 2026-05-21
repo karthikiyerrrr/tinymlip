@@ -55,12 +55,8 @@ def _():
     from tinymlip.graph import AtomGraph, build_graph
     from tinymlip.layers import EquivariantInteraction
     from tinymlip.models import EquivariantMPNN, InvariantMPNN
-    from tinymlip.train import (
-        apply_atomic_reference,
-        fit_atomic_reference,
-        train,
-    )
-    from tinymlip.viz import element_color, plot_graph_3d
+    from tinymlip.train import fit_atomic_reference, train
+    from tinymlip.viz import element_color
 
     return (
         AtomGraph,
@@ -113,9 +109,7 @@ def _(InvariantMPNN, torch):
     water_cutoff = 2.0  # H-O ~ 0.96 A, H-H ~ 1.5 A; 2.0 A includes both
 
     torch.manual_seed(0)
-    hook_model = InvariantMPNN(
-        hidden_dim=16, num_basis=8, cutoff=water_cutoff, n_layers=2
-    )
+    hook_model = InvariantMPNN(hidden_dim=16, num_basis=8, cutoff=water_cutoff, n_layers=2)
     hook_model.eval()
     return ase_molecule, hook_model, water, water_cutoff
 
@@ -151,7 +145,7 @@ def _(
     # Rotate H2O around z by the slider angle, run hook_model, collect forces
     # and a few hidden scalars. Plot side-by-side.
     _theta = float(rotation_angle_deg.value) * np.pi / 180.0
-    _R = torch.tensor(
+    _R = torch.tensor(  # noqa: N806 — standard rotation notation
         [
             [np.cos(_theta), -np.sin(_theta), 0.0],
             [np.sin(_theta), np.cos(_theta), 0.0],
@@ -253,7 +247,7 @@ def _(EquivariantInteraction, ase_molecule, build_graph, torch):
     torch.manual_seed(0)
     mol = ase_molecule("CH3OH")  # 6 atoms
     cutoff_vec = 2.5
-    F_vec = 16
+    F_vec = 16  # noqa: N806 — F is standard ML notation for hidden dim
 
     graph_vec = build_graph(mol, cutoff=cutoff_vec)
     layer_vec = EquivariantInteraction(hidden_dim=F_vec, num_basis=8, cutoff=cutoff_vec)
@@ -420,7 +414,9 @@ def _(
         pos=_pos_rot,
         edge_index=graph_vec.edge_index,
         edge_vec=_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]],
-        edge_dist=(_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]]).norm(dim=-1),
+        edge_dist=(_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]]).norm(
+            dim=-1
+        ),
         cutoff=graph_vec.cutoff,
     )
 
@@ -449,7 +445,9 @@ def _(
     print(f"max vector residual after rotating output: {vector_residual:.2e}  (expect ~0)")
     assert scalar_drift < 1e-5, "scalar features changed under rotation — bug!"
     assert vector_residual < 1e-5, "vectors did not rotate as expected — bug!"
-    print("\nOK — message phase is rotation-equivariant. Scalars are invariant, vectors rotate with the molecule.")
+    print(
+        "\nOK — message phase is rotation-equivariant. Scalars are invariant, vectors rotate with the molecule."
+    )
     return
 
 
@@ -506,7 +504,6 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
         rbf2 = layer_vec.basis(rr) * layer_vec.envelope(rr).unsqueeze(-1)
         a_s, a_vv, a_vs = layer_vec.filter_net(rbf2).chunk(3, dim=-1)
         b_s, b_vv, b_vs = layer_vec.psi(_s_in)[src2].chunk(3, dim=-1)
-        s_mid = _s_in + torch.zeros_like(_s_in).index_add_(0, dst2, b_s * a_s)
         v_mid = _v_in_run + torch.zeros_like(_v_in_run).index_add_(
             0,
             dst2,
@@ -521,7 +518,12 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
 
     print("Uv shape:", tuple(Uv.shape))
     print("Vv shape:", tuple(Vv.shape))
-    print("||Vv|| per (atom, channel) shape:", tuple(vnorm.shape), "  sample [0, :4]:", vnorm[0, :4].tolist())
+    print(
+        "||Vv|| per (atom, channel) shape:",
+        tuple(vnorm.shape),
+        "  sample [0, :4]:",
+        vnorm[0, :4].tolist(),
+    )
     print("<Uv, Vv> shape:", tuple(vdot.shape), "  sample [0, :4]:", vdot[0, :4].tolist())
     return
 
@@ -532,12 +534,14 @@ def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, np, torch):
     torch.manual_seed(0)
     _mol_check = ase_molecule("CH3OH")
     _check_cutoff = 2.5
-    _check_model = EquivariantMPNN(hidden_dim=F_vec, num_basis=8, cutoff=_check_cutoff, n_layers=2).double()
+    _check_model = EquivariantMPNN(
+        hidden_dim=F_vec, num_basis=8, cutoff=_check_cutoff, n_layers=2
+    ).double()
 
     _graph_d = build_graph(_mol_check, cutoff=_check_cutoff, dtype=torch.float64)
     _e_orig = _check_model(_graph_d)
 
-    _R_check = torch.tensor(
+    _R_check = torch.tensor(  # noqa: N806 — standard rotation notation
         [
             [np.cos(1.2), -np.sin(1.2), 0.0],
             [np.sin(1.2), np.cos(1.2), 0.0],
