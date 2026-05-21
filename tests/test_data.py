@@ -184,3 +184,34 @@ def test_load_cu_emt_roundtrips_cached_snapshots(tmp_path):
     np.testing.assert_allclose(meta1["energy"].to_numpy(), meta2["energy"].to_numpy())
     assert len(atoms1) == len(atoms2)
     np.testing.assert_allclose(atoms1[0].positions, atoms2[0].positions)
+
+
+def test_make_collate_passes_stress_when_present():
+    """If samples carry a 'stress' key, the batched dict has [B, 3, 3] stress."""
+    from tinymlip.data import make_collate
+
+    sample_a = {
+        "z": torch.tensor([1, 1], dtype=torch.long),
+        "pos": torch.zeros(2, 3),
+        "energy": torch.tensor(0.0),
+        "forces": torch.zeros(2, 3),
+        "stress": torch.eye(3, dtype=torch.float32),
+        "cell": torch.eye(3, dtype=torch.float32) * 4.0,
+        "pbc": torch.tensor([True, True, True]),
+    }
+    sample_b = {
+        "z": torch.tensor([1, 1, 1], dtype=torch.long),
+        "pos": torch.zeros(3, 3),
+        "energy": torch.tensor(0.0),
+        "forces": torch.zeros(3, 3),
+        "stress": 2 * torch.eye(3, dtype=torch.float32),
+        "cell": torch.eye(3, dtype=torch.float32) * 5.0,
+        "pbc": torch.tensor([True, True, True]),
+    }
+    collate = make_collate(cutoff=2.0)
+    batch = collate([sample_a, sample_b])
+
+    assert "stress" in batch
+    assert batch["stress"].shape == (2, 3, 3)
+    torch.testing.assert_close(batch["stress"][0], torch.eye(3))
+    torch.testing.assert_close(batch["stress"][1], 2 * torch.eye(3))

@@ -197,20 +197,27 @@ def make_collate(
     def _collate(samples: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
         graphs = []
         for sample in samples:
-            # Wrap (z, pos) back into an ASE Atoms so build_graph stays the one
-            # entry point for graph construction. Cheap — no I/O.
-            atoms = ase.Atoms(
+            atoms_kwargs = dict(
                 numbers=sample["z"].cpu().numpy(),
                 positions=sample["pos"].cpu().numpy(),
             )
+            if "cell" in sample:
+                atoms_kwargs["cell"] = sample["cell"].cpu().numpy()
+                atoms_kwargs["pbc"] = (
+                    [bool(b) for b in sample["pbc"].cpu().numpy()] if "pbc" in sample else True
+                )
+            atoms = ase.Atoms(**atoms_kwargs)
             graphs.append(build_graph(atoms, cutoff=cutoff, dtype=dtype))
         batched_graph = collate_graphs(graphs)
-        return {
+        out = {
             "graph": batched_graph,
             "energy": torch.stack([s["energy"] for s in samples]).to(dtype),
             "forces": torch.cat([s["forces"] for s in samples], dim=0).to(dtype),
             "n_atoms": torch.tensor([int(s["z"].numel()) for s in samples], dtype=torch.long),
         }
+        if "stress" in samples[0]:
+            out["stress"] = torch.stack([s["stress"] for s in samples], dim=0).to(dtype)
+        return out
 
     return _collate
 
