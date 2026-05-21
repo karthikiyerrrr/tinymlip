@@ -226,5 +226,118 @@ def _(
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+        ## 2. Vector features on atoms
+
+        PaiNN gives every atom **two** feature tensors:
+
+        ```
+        s : [N, F]        # scalar features per atom  (what InvariantMPNN had)
+        v : [N, F, 3]     # vector features per atom  (new — these rotate with the molecule)
+        ```
+
+        `v` starts at zero. The first time we call an `EquivariantInteraction`,
+        `v` gets bootstrapped by the **creation message**: a vector built from
+        each edge's direction `unit_ij = (pos_j - pos_i) / r_ij`, scaled by a
+        learned scalar weight on the sender's `s`. After the first layer,
+        subsequent layers can both *create* new vectors and *propagate* the
+        existing ones along edges.
+
+        Each channel of `v` is a learned "directional fingerprint" of the
+        local environment of atom $i$ — pick a channel below to see it drawn
+        on the molecule.
+        """
+    )
+    return
+
+
+@app.cell
+def _(EquivariantInteraction, ase_molecule, build_graph, torch):
+    # Pick a slightly bigger molecule than H2O so the channel arrows have
+    # interesting geometry to draw on.
+    torch.manual_seed(0)
+    mol = ase_molecule("CH3OH")  # 6 atoms
+    cutoff_vec = 2.5
+    F_vec = 16
+
+    graph_vec = build_graph(mol, cutoff=cutoff_vec)
+    layer_vec = EquivariantInteraction(hidden_dim=F_vec, num_basis=8, cutoff=cutoff_vec)
+    layer_vec.eval()
+
+    # Bootstrap: s from an embedding, v initialized to zeros (PaiNN convention).
+    embed_vec = torch.nn.Embedding(100, F_vec)
+    torch.nn.init.normal_(embed_vec.weight, std=0.5)
+
+    with torch.no_grad():
+        s0 = embed_vec(graph_vec.z)  # [N, F]
+        v0 = torch.zeros(graph_vec.n_atoms, F_vec, 3)
+        s1, v1 = layer_vec(s0, v0, graph_vec)
+
+    print("s shape:", tuple(s1.shape))
+    print("v shape:", tuple(v1.shape))
+    print("v initial norm (zeros):", float(v0.norm()))
+    print("v after one layer norm (bootstrapped by creation message):", float(v1.norm()))
+    return F_vec, graph_vec, layer_vec, s0, s1, v0, v1
+
+
+@app.cell(hide_code=True)
+def _(F_vec, mo):
+    vec_channel = mo.ui.dropdown(
+        options=[str(i) for i in range(F_vec)],
+        value="0",
+        label="v channel",
+    )
+    vec_channel
+    return (vec_channel,)
+
+
+@app.cell(hide_code=True)
+def _(element_color, go, graph_vec, np, v1, vec_channel):
+    _ch = int(vec_channel.value)
+    _pos = graph_vec.pos.detach().numpy()
+    _z = graph_vec.z.numpy()
+    _v_ch = v1[:, _ch, :].detach().numpy()  # [N, 3] — one channel as a vector per atom
+
+    # Scale arrows for visibility.
+    # Normalize so the largest arrow has length ~1.5 Å, keeping atom geometry legible.
+    _scale = 1.5 / max(np.linalg.norm(_v_ch, axis=-1).max(), 1e-6)
+
+    _atoms_p = go.Scatter3d(
+        x=_pos[:, 0],
+        y=_pos[:, 1],
+        z=_pos[:, 2],
+        mode="markers",
+        marker=dict(size=14, color=[element_color(int(z)) for z in _z]),
+        name="atoms",
+    )
+    _arrow_traces = []
+    for _k in range(graph_vec.n_atoms):
+        _start = _pos[_k]
+        _end = _start + _scale * _v_ch[_k]
+        _arrow_traces.append(
+            go.Scatter3d(
+                x=[_start[0], _end[0]],
+                y=[_start[1], _end[1]],
+                z=[_start[2], _end[2]],
+                mode="lines",
+                line=dict(color="royalblue", width=5),
+                showlegend=False,
+            )
+        )
+
+    _fig_ch = go.Figure([_atoms_p, *_arrow_traces])
+    _fig_ch.update_layout(
+        title=f"v[:, {_ch}, :] — directional fingerprint, channel {_ch}",
+        scene=dict(aspectmode="data"),
+        margin=dict(l=0, r=0, t=40, b=0),
+        height=420,
+    )
+    _fig_ch
+    return
+
+
 if __name__ == "__main__":
     app.run()
