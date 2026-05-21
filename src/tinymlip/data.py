@@ -388,22 +388,22 @@ class _CuEMTTorchDataset(Dataset):
     """
 
     def __init__(self, atoms_list: list[ase.Atoms], dtype: torch.dtype = torch.float32) -> None:
-        self.atoms_list = atoms_list
-        self.dtype = dtype
+        self._atoms_list = atoms_list
+        self._dtype = dtype
 
     def __len__(self) -> int:
-        return len(self.atoms_list)
+        return len(self._atoms_list)
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
-        atoms = self.atoms_list[idx]
+        atoms = self._atoms_list[idx]
         return {
             "z": torch.as_tensor(atoms.numbers, dtype=torch.long),
-            "pos": torch.as_tensor(atoms.positions, dtype=self.dtype),
-            "cell": torch.as_tensor(atoms.cell.array, dtype=self.dtype),
+            "pos": torch.as_tensor(atoms.positions, dtype=self._dtype),
+            "cell": torch.as_tensor(atoms.cell.array, dtype=self._dtype),
             "pbc": torch.as_tensor(atoms.pbc, dtype=torch.bool),
-            "energy": torch.as_tensor(atoms.info["energy"], dtype=self.dtype),
-            "forces": torch.as_tensor(atoms.arrays["forces"], dtype=self.dtype),
-            "stress": torch.as_tensor(atoms.info["stress"], dtype=self.dtype),
+            "energy": torch.as_tensor(atoms.info["energy"], dtype=self._dtype),
+            "forces": torch.as_tensor(atoms.arrays["forces"], dtype=self._dtype),
+            "stress": torch.as_tensor(atoms.info["stress"], dtype=self._dtype),
         }
 
 
