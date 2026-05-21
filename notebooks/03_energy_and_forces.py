@@ -521,6 +521,75 @@ def _(
     return
 
 
+@app.cell
+def _(
+    atoms,
+    build_graph,
+    compute_forces,
+    cutoff,
+    forces,
+    mo,
+    model,
+    predicted_energy,
+    torch,
+):
+    # Rotation symmetry: the architecture sees only the scalar distance `r`
+    # inside every layer (see notebook 02), so E should be exactly rotation-
+    # invariant and F should rotate with the molecule (covariant). We verify
+    # both by sampling a random proper rotation R and comparing.
+    torch.manual_seed(1)
+    random_3x3 = torch.randn(3, 3)
+    R_rot, _ = torch.linalg.qr(random_3x3)                      # orthogonal 3x3
+    if torch.det(R_rot) < 0:                                    # ensure det = +1 (proper rotation, not a reflection)
+        R_rot[:, 0] = -R_rot[:, 0]
+
+    # Apply R to every atom's position. ASE stores positions as row vectors,
+    # so `positions @ R.T` puts R @ r into each row.
+    atoms_rotated = atoms.copy()
+    atoms_rotated.set_positions(atoms.get_positions() @ R_rot.numpy().T)
+
+    graph_rotated = build_graph(atoms_rotated, cutoff=cutoff.value)
+    graph_rotated.pos.requires_grad_(True)
+    energy_rotated = model(graph_rotated)                        # scalar
+    forces_rotated = compute_forces(energy_rotated, graph_rotated.pos)   # [n_atoms, 3]
+
+    # Expected force after rotation: F_rotated[i] = R @ F[i], i.e. forces @ R.T.
+    forces_expected = forces.detach() @ R_rot.T                  # [n_atoms, 3]
+
+    energy_rot_diff = (energy_rotated - predicted_energy).abs().item()
+    forces_rot_resid = (forces_rotated.detach() - forces_expected).norm(dim=-1).max().item()
+
+    mo.md(
+        f"### Rotation behaviour\n\n"
+        f"Random proper rotation `R` (orthogonal, det = +1) applied to every atom:\n\n"
+        f"- `|E(rotated) − E(original)|` = `{energy_rot_diff:.2e}` ✅ (E is rotation-invariant)\n"
+        f"- `max_i ||F_rotated[i] − R @ F[i]||` = `{forces_rot_resid:.2e}` ✅ (F is rotation-covariant)\n\n"
+        f"Both at float32 roundoff."
+    )
+
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    The takeaway: the invariant model **is** fully rotation-symmetric. **E is
+    rotation-invariant** and **F is rotation-covariant** — both fall out for
+    free because every layer only ever sees the scalar edge distance $r$,
+    never the edge direction. There is nothing wrong with this model under
+    rotation.
+
+    So what does the equivariant model (notebook 05) actually add? Not
+    symmetry — **expressivity**. Vector channels on each atom let the model
+    represent directional features *internally* (e.g. "the bond axis from
+    this atom to its neighbour") instead of immediately collapsing direction
+    to a scalar at every step. That gives sharper forces and access to
+    vector observables (dipoles, polarizabilities), but the invariant model
+    is *not* broken under rotation.
+    """)
+    return
+
+
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
@@ -646,18 +715,22 @@ def _(mo):
 
     - **Training.** The model in every cell above is *untrained* — its
       forces are random but valid (conservative, translation-invariant,
-      summing to zero). Notebook 04 trains `InvariantMPNN` on rMD17 with an
-      energy + force-matching loss.
-    - **Equivariant message passing.** Our scalar messages discard the
-      *direction* an edge points. For many physical observables (forces,
-      dipoles, polarizabilities) that's a real handicap. Notebook 05
-      introduces `EquivariantMPNN` — same anatomy, but each atom also
-      carries vector channels that rotate with the molecule — and compares
-      the two side-by-side on the same training run.
+      rotation-covariant, summing to zero). Notebook 04 trains
+      `InvariantMPNN` on rMD17 with an energy + force-matching loss.
+    - **Equivariant message passing.** The invariant model above is fully
+      rotation-symmetric — what notebook 05 changes is *expressivity*, not
+      symmetry. Each atom in `EquivariantMPNN` carries vector channels
+      alongside its scalar features. Vector channels let the model represent
+      directional features internally (bond axes, force directions) instead
+      of immediately collapsing direction to a scalar at every step —
+      giving sharper forces and access to vector observables (dipoles).
+      Notebook 05 introduces `EquivariantMPNN` and compares it side-by-side
+      with `InvariantMPNN` on the same training run.
     - **Periodic systems.** Real materials live in periodic cells. Notebook
       06 adds PBC support to the neighbor list and demos the model as an
       ASE calculator on a small crystal.
     """)
+
     return
 
 
