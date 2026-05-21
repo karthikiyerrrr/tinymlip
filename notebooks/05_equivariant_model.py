@@ -699,19 +699,40 @@ def _(mo):
 
     The message phase moved information *along edges*. The update phase does
     a per-atom mixing of `s` and `v` to let scalars learn from vector
-    channels. Two linear maps applied channel-wise on the vector axis:
+    channels. Two linear maps `U` and `V` mix **channels** (the $F$
+    axis) of `v`, leaving the 3-d direction axis untouched:
 
     $$
-    Uv = U(v), \qquad Vv = V(v) \quad \text{(both have shape \([N, F, 3]\); no bias — a constant vector would break equivariance)}
+    Uv = U(v), \qquad Vv = V(v) \quad \text{(both have shape \([N, F, 3]\); no bias)}
     $$
 
-    From these we build **two rotation invariants** per channel:
+    **Axis discipline (the equivariance trick).** Mechanically, `U` is
+    `nn.Linear(F, F)` applied along the channel axis only — we transpose
+    `v` from `[N, F, 3]` to `[N, 3, F]`, apply `U`, transpose back. The
+    3-d axis is left alone. Mixing across the 3-d axis (a generic 3×3
+    matrix) would introduce a preferred frame and break rotation
+    equivariance; the architecture has to avoid it by construction. And
+    no bias — a constant vector added to `v` would also pick a preferred
+    direction.
+
+    From `Uv` and `Vv` we build **two rotation invariants** per channel:
 
     $$
     \|Vv\|_2 \in \mathbb{R}^F, \qquad \langle Uv, Vv \rangle \in \mathbb{R}^F
     $$
 
-    These scalars are how `s` learns from `v`. Then an MLP on
+    **Why two mixers, not one?** If we only had `V`, then $\langle Vv,
+    Vv \rangle = \|Vv\|_2^2$ — the inner product would be redundant with
+    the norm. With *two independent* mixers, $\langle Uv, Vv \rangle$
+    becomes a genuinely new quantity that $\|Vv\|$ alone can't represent:
+    it can be **negative** (anti-correlation between two learned
+    directional features), it carries **phase information** between
+    channels, and unlike $\|Vv\|$ it distinguishes "two vectors pointing
+    the same way" from "two vectors pointing opposite ways." This is the
+    standard move from physics tensor invariants — two different vector
+    fields' inner product is a scalar that neither field's norm captures.
+
+    These two invariants are how `s` learns from `v`. An MLP on
     $[s,\ \|Vv\|_2]$ produces three gates:
 
     - $a_{ss}$: scalar bias correction added to `s`.
@@ -720,8 +741,24 @@ def _(mo):
     - $a_{vv}$: per-channel scalar gate multiplying $Uv$ before adding it to
       `v`.
 
-    We won't re-derive each line — read it, run it, then convince yourself
-    that the end-to-end energy is rotation-invariant.
+    **The universal constraint of equivariant networks.** All
+    nonlinearities act on **scalar invariants of `v`** — norms and dot
+    products — never on `v` itself. Linear ops on `v` are allowed only
+    along the channel ($F$) axis, never along the 3-d direction axis.
+    Read that as the SO(3)-Lagrangian rule from physics: contract
+    indices, never let a Cartesian component appear bare. The update
+    equations therefore only ever do two things to `v`: (a) mix
+    channels with `U`/`V` (linear, leaves direction axis alone), and
+    (b) scale by a scalar derived from invariants. A full 3×3 mix, a
+    per-component nonlinearity, or a bias term would each introduce a
+    preferred frame.
+
+    That's it. PaiNN is the simplest architecture that respects
+    rotation equivariance while still being expressive — once you see
+    the constraint, the rest of the equations write themselves.
+
+    We won't re-derive each line below — read it, run it, then convince
+    yourself that the end-to-end energy is rotation-invariant.
     """)
     return
 
