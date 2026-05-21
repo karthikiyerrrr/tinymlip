@@ -453,5 +453,111 @@ def _(AtomGraph, graph_vec, layer_vec, np, s0, s_after_msg, torch, v_after_msg, 
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+        ## 4. The update phase, as inset
+
+        The message phase moved information *along edges*. The update phase does
+        a per-atom mixing of `s` and `v` to let scalars learn from vector
+        channels. Two linear maps applied channel-wise on the vector axis:
+
+        $$
+        Uv = U(v), \qquad Vv = V(v) \quad \text{(both have shape \([N, F, 3]\); no bias — a constant vector would break equivariance)}
+        $$
+
+        From these we build **two rotation invariants** per channel:
+
+        $$
+        \|Vv\|_2 \in \mathbb{R}^F, \qquad \langle Uv, Vv \rangle \in \mathbb{R}^F
+        $$
+
+        These scalars are how `s` learns from `v`. Then an MLP on
+        $[s,\ \|Vv\|_2]$ produces three gates:
+
+        - $a_{ss}$: scalar bias correction added to `s`.
+        - $a_{sv}$: scalar gate multiplying $\langle Uv, Vv \rangle$ before
+          adding it to `s`.
+        - $a_{vv}$: per-channel scalar gate multiplying $Uv$ before adding it to
+          `v`.
+
+        We won't re-derive each line — read it, run it, then convince yourself
+        that the end-to-end energy is rotation-invariant.
+        """
+    )
+    return
+
+
+@app.cell
+def _(F_vec, graph_vec, layer_vec, s0, torch):
+    # Run the full layer (message + update). We'll inspect the update-phase
+    # intermediates by reaching into the layer's modules.
+    torch.manual_seed(0)
+    _s_in = s0  # from section 3
+    _v_in_run = torch.zeros(graph_vec.n_atoms, F_vec, 3)
+
+    with torch.no_grad():
+        _s_out, _v_out = layer_vec(_s_in, _v_in_run, graph_vec)
+
+        # Recompute the message phase intermediates so we can show the update inputs.
+        src2, dst2 = graph_vec.edge_index
+        ev = graph_vec.pos[dst2] - graph_vec.pos[src2]
+        rr = ev.norm(dim=-1).clamp(min=1e-6)
+        uu = ev / rr.unsqueeze(-1)
+        rbf2 = layer_vec.basis(rr) * layer_vec.envelope(rr).unsqueeze(-1)
+        a_s, a_vv, a_vs = layer_vec.filter_net(rbf2).chunk(3, dim=-1)
+        b_s, b_vv, b_vs = layer_vec.psi(_s_in)[src2].chunk(3, dim=-1)
+        s_mid = _s_in + torch.zeros_like(_s_in).index_add_(0, dst2, b_s * a_s)
+        v_mid = _v_in_run + torch.zeros_like(_v_in_run).index_add_(
+            0,
+            dst2,
+            (b_vv * a_vv).unsqueeze(-1) * _v_in_run[src2]
+            + (b_vs * a_vs).unsqueeze(-1) * uu.unsqueeze(-2),
+        )
+
+        Uv = layer_vec.U(v_mid.transpose(-1, -2)).transpose(-1, -2)  # noqa: N806 — [N, F, 3]
+        Vv = layer_vec.V(v_mid.transpose(-1, -2)).transpose(-1, -2)  # noqa: N806 — [N, F, 3]
+        vnorm = Vv.norm(dim=-1)  # [N, F]
+        vdot = (Uv * Vv).sum(dim=-1)  # [N, F]
+
+    print("Uv shape:", tuple(Uv.shape))
+    print("Vv shape:", tuple(Vv.shape))
+    print("||Vv|| per (atom, channel) shape:", tuple(vnorm.shape), "  sample [0, :4]:", vnorm[0, :4].tolist())
+    print("<Uv, Vv> shape:", tuple(vdot.shape), "  sample [0, :4]:", vdot[0, :4].tolist())
+    return
+
+
+@app.cell
+def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, np, torch):
+    # Build a full EquivariantMPNN, energy-check on rotation.
+    torch.manual_seed(0)
+    _mol_check = ase_molecule("CH3OH")
+    _check_cutoff = 2.5
+    _check_model = EquivariantMPNN(hidden_dim=F_vec, num_basis=8, cutoff=_check_cutoff, n_layers=2).double()
+
+    _graph_d = build_graph(_mol_check, cutoff=_check_cutoff, dtype=torch.float64)
+    _e_orig = _check_model(_graph_d)
+
+    _R_check = torch.tensor(
+        [
+            [np.cos(1.2), -np.sin(1.2), 0.0],
+            [np.sin(1.2), np.cos(1.2), 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=torch.float64,
+    )
+    _mol_rot = _mol_check.copy()
+    _mol_rot.set_positions(_mol_check.get_positions() @ _R_check.numpy().T)
+    _graph_dr = build_graph(_mol_rot, cutoff=_check_cutoff, dtype=torch.float64)
+    _e_rot = _check_model(_graph_dr)
+
+    print(f"E(original)  = {_e_orig.item():.10f}")
+    print(f"E(rotated)   = {_e_rot.item():.10f}")
+    print(f"|ΔE|         = {abs(_e_orig.item() - _e_rot.item()):.2e}  (expect < 1e-8)")
+    assert abs(_e_orig.item() - _e_rot.item()) < 1e-8
+    return
+
+
 if __name__ == "__main__":
     app.run()
