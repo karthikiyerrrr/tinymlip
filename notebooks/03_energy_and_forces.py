@@ -53,6 +53,26 @@ def _(mo):
 
 @app.cell(hide_code=True)
 def _(mo):
+    mo.md(r"""
+    > **Try this.** Drop `cutoff` to 2 Å — what happens to the per-atom
+    > energies and forces, and why?
+    >
+    > <details><summary>Answer</summary>
+    >
+    > At 2 Å only the shortest covalent bonds remain (C–H ≈ 1.1 Å, O–H ≈
+    > 1.0 Å, C–O ≈ 1.4 Å), the graph fragments, and per-atom energies
+    > collapse toward identical values for atoms with identical
+    > immediate-neighbor sets. The three methyl hydrogens, for instance,
+    > all see exactly one neighbor at exactly the same distance, so their
+    > bars converge.
+    >
+    > </details>
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
     n_layers = mo.ui.slider(start=1, stop=5, step=1, value=3, label="n_layers")
     n_layers
     return (n_layers,)
@@ -671,9 +691,13 @@ def _(mo):
 
     We use **float64** for both the model and the graph here — the
     central-difference truncation error is $O(\varepsilon^2)$, so float32
-    roundoff would dominate at $\varepsilon = 10^{-3}$ Å. (The same
-    comparison runs in the test suite under `tests/test_forces.py`.)
+    roundoff would dominate at $\varepsilon = 10^{-3}$ Å. (Central, not
+    forward — the $O(\varepsilon^2)$ truncation gives an extra digit of
+    agreement for the same $\varepsilon$ than a forward $O(\varepsilon)$
+    difference would.) The same comparison runs in the test suite under
+    `tests/test_forces.py`.
     """)
+
     return
 
 
