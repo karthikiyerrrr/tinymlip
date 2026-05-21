@@ -1098,32 +1098,92 @@ def _(mo):
     ## What this shows
 
     At identical hyperparameters and identical training data, the equivariant
-    model reaches **substantially lower validation force MAE** than the
-    invariant model — roughly a 1.5× improvement on this preset. Energy MAE
-    tells a more nuanced story: the equivariant model has more parameters
-    (extra channels in the message + update phases), so per-parameter the
-    comparison depends on training budget. With longer training and at scale,
-    PaiNN-style equivariant models also overtake on energy MAE; on this
-    tiny-preset short run, the headline win is on forces.
+    model reaches **lower validation force MAE** than the invariant model —
+    roughly a 1.5× improvement on this preset.
 
-    The cost is a more complex layer (message + update phases, vector
-    channels), and roughly 2× compute per forward pass for the same hidden
-    dimension.
+    **Calibration against literature.** That 1.5× is a directional hint,
+    not the headline number. PaiNN's published rMD17 results show
+    roughly **3–5× force-MAE improvement over SchNet** at full training
+    (~1000 frames, hundreds of epochs); MACE adds another ~2–3× on top.
+    Our preset trains on 300 frames for 40 epochs — both models are
+    under-trained, so the equivariant model's inductive-bias advantage
+    is *visible but compressed*. Absolute force MAE on this preset is
+    in the few-kcal/mol/Å range (~10× literature). The **directional**
+    comparison (equivariant beats invariant) is faithful; the magnitudes
+    are tiny-preset artefacts. The same story as nb04's calibration
+    discipline — measure relative to a known reference and don't read
+    too much into the raw numbers.
 
-    The structural reason it works: the equivariant model can encode and
-    transport **directional** information through its hidden state. Forces
-    are vectors; an architecture whose hidden state matches the geometry of
-    the prediction target wins by inductive bias, not just capacity.
+    **Why the absolute numbers are higher than nb04's.** nb04 trains
+    one model with `n_layers=3`, `n_train=500`, `n_epochs=30` default.
+    nb05 trains *two* models in a single notebook run, so we cut to
+    `n_layers=2`, `n_train=300`, `n_epochs=40` to keep total CPU time
+    under ~10 minutes. Both models suffer the same way from the reduced
+    budget — the comparison stays honest, but the absolute MAEs are
+    higher than nb04's.
+
+    **A param-count caveat.** The equivariant model has roughly **2.4×**
+    more trainable parameters than the invariant model at the same
+    `hidden_dim` (extra filter groups for the three message flavours,
+    the `U`/`V` mixers, and the update MLP). The honest follow-up
+    question — "are you just comparing a bigger model to a smaller
+    one?" — has a literature answer: param-matching by shrinking the
+    equivariant model's `hidden_dim` to the invariant model's parameter
+    count still leaves the equivariant model ahead on forces, though by
+    less. See PaiNN's published ablation. The structural win is real,
+    not just a capacity win.
+
+    **Energy MAE tells a more nuanced story.** With longer training and
+    at scale, PaiNN-style equivariant models also overtake on energy MAE;
+    on this tiny-preset short run, the headline win is on forces.
+
+    **The structural reason it works.** The equivariant model can encode
+    and transport **directional** information through its hidden state.
+    Forces are vectors; an architecture whose hidden state matches the
+    geometry of the prediction target wins by inductive bias, not just
+    capacity.
+
+    **A note on parity (and what PaiNN does *not* do).** PaiNN handles
+    **SO(3)** (proper rotations), not the full **O(3)** (rotations plus
+    reflections with explicit parity tracking). It treats `v`
+    uniformly as a **true vector** — under a mirror reflection $R$
+    with $\det R = -1$, `v` transforms as $v \to Rv$, the same as
+    position. **Pseudo-vectors** (angular momentum, magnetic moment)
+    transform with an extra sign flip ($v \to -Rv$), and PaiNN does
+    not distinguish them. In practice, PaiNN will be rotation-invariant
+    in energy and rotation-equivariant in forces, but it cannot
+    distinguish a chiral molecule from its mirror image *if scalar
+    features alone can't*. For ethanol (achiral) this doesn't matter;
+    for lactic acid or alanine it would. NequIP and MACE (built on
+    `e3nn`) handle parity explicitly: every tensor channel is tagged
+    even/odd, and the network tracks parity through every operation.
+
+    **What PaiNN's `v` unlocks beyond force quality: vector observables.**
+    In this notebook we use `v` only to enrich the scalar pipeline for
+    energy; forces come from autograd on $E$ (same as the invariant
+    model). PaiNN also natively supports direct prediction of **vector
+    observables** — e.g. the molecular dipole as $\boldsymbol{\mu} =
+    \sum_i (q_i\,\mathbf{r}_i + \mathbf{v}_i)$ with per-atom partial
+    charges $q_i$ and per-atom vector heads — because `v` already
+    transforms correctly under rotation. We don't wire that up here;
+    the PaiNN paper does.
 
     **Forward link → nb06.** PaiNN handles molecules fine. Crystals need
     one more idea: a graph whose edges can cross periodic boundaries. We'll
     extend the equivariant model to PBC and run a tiny crystal demo.
 
-    **Beyond PaiNN.** Higher-order tensors (ℓ ≥ 2) give equivariant models
-    even more expressive hidden states. NequIP and MACE are the standard
-    next step — they typically build on the `e3nn` library. We don't pull
-    in `e3nn` here because it's a heavy dependency for what is, at this
-    stage of the arc, a single notebook of motivation.
+    **Beyond PaiNN: higher-order tensors.** PaiNN's `v` is the **ℓ = 1**
+    (vector / dipole-like) channel of an SO(3) irreducible-representation
+    decomposition. NequIP and MACE add **ℓ = 2** (quadrupole-like rank-2
+    traceless symmetric tensors), **ℓ = 3** (octupole), and higher. Each
+    ℓ corresponds to a specific irreducible representation of SO(3) —
+    the same decomposition you use when expanding a charge distribution
+    in spherical multipoles. The ℓ = 0, 1, 2, … channels together form a
+    basis for any local geometric feature; the choice of where to truncate
+    is the architecture's expressivity-vs-cost trade-off. These models
+    typically build on the `e3nn` library — we don't pull it in here
+    because it's a heavy dependency for what is, at this stage of the
+    arc, a single notebook of motivation.
     """)
     return
 
