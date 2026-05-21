@@ -27,7 +27,10 @@ class AtomGraph:
     Edge geometry (`edge_vec`, `edge_dist`) is cached at construction time so
     layers can read it directly. Models that need autograd-correct forces must
     recompute `edge_vec` from `pos` inside their forward pass — `pos` must be
-    the autograd leaf, not `edge_vec`. See models.py when it lands.
+    the autograd leaf, not `edge_vec`. See models.py when it lands. Under PBC,
+    `shift_idx` carries the integer lattice offset `S` for each edge so the model
+    can recompute `edge_vec = pos[dst] - pos[src] + S @ cell` inside its forward
+    pass. `None` on the non-PBC path.
 
     Batching: `collate_graphs([g1, g2, ...])` builds the disjoint union of
     several AtomGraphs into one, populating `batch` so per-frame readouts can
@@ -43,6 +46,9 @@ class AtomGraph:
     cell: torch.Tensor | None = None  # [3, 3] float; None for non-PBC
     pbc: tuple[bool, bool, bool] = (False, False, False)
     batch: torch.Tensor | None = None  # [N] long — frame id per atom; None for a single graph
+    shift_idx: torch.Tensor | None = (
+        None  # [E, 3] long — integer lattice shifts per edge; None for non-PBC
+    )
 
     @property
     def n_atoms(self) -> int:

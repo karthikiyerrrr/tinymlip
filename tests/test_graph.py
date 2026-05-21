@@ -52,6 +52,41 @@ def test_atomgraph_holds_documented_fields():
         g.cutoff = 3.0  # type: ignore[misc]
 
 
+def test_atomgraph_shift_idx_field_defaults_to_none():
+    """shift_idx exists, defaults to None, and round-trips when supplied."""
+    z = torch.tensor([1, 1], dtype=torch.long)
+    pos = torch.zeros((2, 3), dtype=torch.float32)
+    edge_index = torch.tensor([[0], [1]], dtype=torch.long)
+    edge_vec = torch.tensor([[1.0, 0.0, 0.0]], dtype=torch.float32)
+    edge_dist = torch.tensor([1.0], dtype=torch.float32)
+
+    # Default: None (matches existing non-PBC contract)
+    g = AtomGraph(
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_vec=edge_vec,
+        edge_dist=edge_dist,
+        cutoff=5.0,
+    )
+    assert g.shift_idx is None
+
+    # When supplied, must be [E, 3] long
+    shift_idx = torch.tensor([[1, 0, 0]], dtype=torch.long)
+    g2 = AtomGraph(
+        z=z,
+        pos=pos,
+        edge_index=edge_index,
+        edge_vec=edge_vec,
+        edge_dist=edge_dist,
+        cutoff=5.0,
+        shift_idx=shift_idx,
+    )
+    assert g2.shift_idx is not None
+    assert g2.shift_idx.dtype == torch.long
+    assert g2.shift_idx.shape == (1, 3)
+
+
 def test_atomgraph_repr_is_short_and_informative():
     # An rMD17-sized molecule: full tensor repr would be hundreds of lines.
     # The custom __repr__ should stay on one line and surface the key fields.
