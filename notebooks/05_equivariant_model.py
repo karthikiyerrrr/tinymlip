@@ -352,7 +352,7 @@ def _(mo):
 
 @app.cell
 def _(F_vec, graph_vec, layer_vec, s0, torch):
-    # Reuse layer_vec, graph_vec, s0 from section 3.
+    # Reuse layer_vec, graph_vec, s0 from section 2.
     src, dst = graph_vec.edge_index  # [E], [E]
     edge_vec = graph_vec.pos[dst] - graph_vec.pos[src]  # [E, 3]
     r = edge_vec.norm(dim=-1).clamp(min=1e-6)  # [E]
@@ -363,7 +363,7 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
         phi_s, phi_vv, phi_vs = layer_vec.filter_net(rbf).chunk(3, dim=-1)  # each [E, F]
         psi_s, psi_vv, psi_vs = layer_vec.psi(s0)[src].chunk(3, dim=-1)  # each [E, F]
 
-        # Use v=0 to start (matches section 3's bootstrap).
+        # Use v=0 to start (matches section 2's bootstrap).
         v_in = torch.zeros(graph_vec.n_atoms, F_vec, 3)
 
         m_s = psi_s * phi_s  # [E, F]
@@ -490,7 +490,7 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
     # Run the full layer (message + update). We'll inspect the update-phase
     # intermediates by reaching into the layer's modules.
     torch.manual_seed(0)
-    _s_in = s0  # from section 3
+    _s_in = s0  # from section 2
     _v_in_run = torch.zeros(graph_vec.n_atoms, F_vec, 3)
 
     with torch.no_grad():
@@ -564,7 +564,7 @@ def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, np, torch):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 6. Train + compare against the invariant model
+    ## 5. Train + compare against the invariant model
 
     Same training stack as nb04 (`tinymlip.train`), same rMD17 subset, same
     hyperparameters across both models. **Only the architecture varies** —
@@ -788,7 +788,7 @@ def _(mo):
 
     At identical hyperparameters and identical training data, the equivariant
     model reaches **substantially lower validation force MAE** than the
-    invariant model — roughly a 2× improvement on this preset. Energy MAE
+    invariant model — roughly a 1.5× improvement on this preset. Energy MAE
     tells a more nuanced story: the equivariant model has more parameters
     (extra channels in the message + update phases), so per-parameter the
     comparison depends on training budget. With longer training and at scale,
