@@ -131,3 +131,56 @@ def test_make_collate_returns_batched_dict(ethanol_atoms):
     assert batch["energy"].shape == (3,)
     assert batch["forces"].shape == (3 * 9, 3)
     assert torch.equal(batch["n_atoms"], torch.tensor([9, 9, 9], dtype=torch.long))
+
+
+def test_generate_cu_dataset_produces_atoms_with_labels(tmp_path):
+    """A tiny 4-snapshot run produces ASE Atoms with energy/forces/stress."""
+    import numpy as np
+
+    from tinymlip.data import generate_cu_dataset
+
+    snapshots = generate_cu_dataset(
+        n_snapshots=4,
+        supercell=(1, 1, 1),
+        rattle_amp=0.05,
+        strain_range=0.02,
+        shear_range=0.01,
+        seed=0,
+    )
+
+    assert len(snapshots) == 4
+    for atoms in snapshots:
+        assert atoms.cell.array.shape == (3, 3)
+        assert all(atoms.pbc)
+        assert "energy" in atoms.info
+        assert isinstance(atoms.info["energy"], float)
+        assert "stress" in atoms.info
+        assert atoms.info["stress"].shape == (3, 3)
+        assert atoms.arrays["forces"].shape == (len(atoms), 3)
+        assert np.isfinite(atoms.info["energy"])
+        assert np.isfinite(atoms.info["stress"]).all()
+        assert np.isfinite(atoms.arrays["forces"]).all()
+
+
+def test_load_cu_emt_roundtrips_cached_snapshots(tmp_path):
+    """First call generates+caches; second call reads from cache and matches."""
+    import numpy as np
+
+    from tinymlip.data import load_cu_emt
+
+    meta1, atoms1 = load_cu_emt(
+        cache_dir=str(tmp_path / "cu_emt"),
+        n_snapshots=4,
+        supercell=(1, 1, 1),
+        seed=0,
+    )
+    meta2, atoms2 = load_cu_emt(
+        cache_dir=str(tmp_path / "cu_emt"),
+        n_snapshots=4,
+        supercell=(1, 1, 1),
+        seed=0,
+    )
+    assert meta1.shape == meta2.shape
+    np.testing.assert_allclose(meta1["energy"].to_numpy(), meta2["energy"].to_numpy())
+    assert len(atoms1) == len(atoms2)
+    np.testing.assert_allclose(atoms1[0].positions, atoms2[0].positions)

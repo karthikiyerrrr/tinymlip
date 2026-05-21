@@ -18,9 +18,13 @@ from pathlib import Path
 from typing import Literal
 
 import ase
+import ase.build
+import ase.io
 import numpy as np
 import polars as pl
 import torch
+from ase.calculators.emt import EMT
+from ase.stress import voigt_6_to_full_3x3_stress
 from torch.utils.data import Dataset
 
 from tinymlip.graph import build_graph, collate_graphs
@@ -209,3 +213,158 @@ def make_collate(
         }
 
     return _collate
+
+
+def _apply_strain(atoms: ase.Atoms, eps: np.ndarray) -> ase.Atoms:
+    """Apply a symmetric strain ε to both positions and cell: r → r·(I+ε), c → c·(I+ε).
+
+    Returns a new Atoms object; the input is not modified.
+    """
+    i_plus_eps = np.eye(3) + eps
+    new = atoms.copy()
+    new.set_cell(atoms.cell.array @ i_plus_eps, scale_atoms=False)
+    new.set_positions(atoms.positions @ i_plus_eps)
+    return new
+
+
+def generate_cu_dataset(
+    *,
+    n_snapshots: int,
+    supercell: tuple[int, int, int] = (2, 2, 2),
+    rattle_amp: float = 0.1,
+    strain_range: float = 0.05,
+    shear_range: float = 0.02,
+    seed: int = 0,
+    a: float = 3.615,
+) -> list[ase.Atoms]:
+    """Generate rattled + strained FCC-Cu snapshots labeled by ASE's EMT.
+
+    Each snapshot starts from FCC Cu at lattice constant `a` × `supercell`,
+    then applies in order:
+      1. Rattle: per-atom Gaussian displacements with std=`rattle_amp` Å.
+      2. Symmetric strain ε with diagonal ~ U(−strain_range, +strain_range)
+         and off-diagonal ~ U(−shear_range, +shear_range), applied to both
+         positions and cell so the deformation is volume- and shape-consistent.
+      3. Attach EMT(), read energy / forces / stress, stash on .info / .arrays.
+
+    Args:
+        n_snapshots: number of snapshots to generate.
+        supercell:   integer scaling of the conventional FCC cell. (2,2,2) → 32 atoms.
+        rattle_amp:  Gaussian rattle std in Å.
+        strain_range: half-width of the uniform distribution on diagonal ε.
+        shear_range:  half-width on off-diagonal ε.
+        seed:        seeds numpy's RNG used for rattle and ε.
+        a:           lattice constant in Å. Default 3.615 (EMT Cu equilibrium).
+
+    Returns:
+        list of ASE Atoms with .info["energy"] (float), .info["stress"] ([3,3]
+        ndarray), .arrays["forces"] ([N,3] ndarray) attached.
+    """
+    rng = np.random.default_rng(seed)
+    base = ase.build.bulk("Cu", "fcc", a=a, cubic=True).repeat(supercell)
+    snapshots: list[ase.Atoms] = []
+    for _ in range(n_snapshots):
+        atoms = base.copy()
+        # 1. Rattle (uses its own RNG seed for reproducibility — derive from `rng`)
+        atoms.rattle(stdev=rattle_amp, seed=int(rng.integers(0, 2**31 - 1)))
+        # 2. Build symmetric strain and apply
+        eps = np.zeros((3, 3))
+        eps[0, 0] = rng.uniform(-strain_range, strain_range)
+        eps[1, 1] = rng.uniform(-strain_range, strain_range)
+        eps[2, 2] = rng.uniform(-strain_range, strain_range)
+        s01 = rng.uniform(-shear_range, shear_range)
+        s02 = rng.uniform(-shear_range, shear_range)
+        s12 = rng.uniform(-shear_range, shear_range)
+        eps[0, 1] = eps[1, 0] = s01
+        eps[0, 2] = eps[2, 0] = s02
+        eps[1, 2] = eps[2, 1] = s12
+        atoms = _apply_strain(atoms, eps)
+        # 3. Label with EMT
+        atoms.calc = EMT()
+        e = float(atoms.get_potential_energy())
+        f = atoms.get_forces()
+        s = atoms.get_stress(voigt=False)  # [3, 3]
+        # Detach the calculator so the Atoms object is picklable and serializable
+        atoms.calc = None
+        atoms.info["energy"] = e
+        atoms.info["stress"] = np.asarray(s, dtype=np.float64)  # [3, 3]
+        atoms.arrays["forces"] = np.asarray(f, dtype=np.float64)
+        snapshots.append(atoms)
+    return snapshots
+
+
+def load_cu_emt(
+    *,
+    cache_dir: str = "data/cu_emt",
+    n_snapshots: int = 800,
+    supercell: tuple[int, int, int] = (2, 2, 2),
+    rattle_amp: float = 0.1,
+    strain_range: float = 0.05,
+    shear_range: float = 0.02,
+    seed: int = 0,
+    a: float = 3.615,
+    split_fractions: tuple[float, float, float] = (0.75, 0.125, 0.125),
+) -> tuple[pl.DataFrame, list[ase.Atoms]]:
+    """Load (or generate-then-cache) the synthetic Cu/EMT dataset.
+
+    On first call: runs `generate_cu_dataset` and writes the snapshots to
+    `<cache_dir>/snapshots.extxyz` (ASE extended XYZ — carries cells, per-atom
+    forces, and stress natively). Subsequent calls just read the file.
+
+    Returns:
+        meta: polars DataFrame with columns id, n_atoms, volume, energy,
+              force_norm_max, stress_norm, split ("train"/"val"/"test").
+        atoms: parallel list of ASE Atoms with labels on .info/.arrays.
+    """
+    cache_path = Path(cache_dir) / "snapshots.extxyz"
+    if not cache_path.exists():
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        snapshots = generate_cu_dataset(
+            n_snapshots=n_snapshots,
+            supercell=supercell,
+            rattle_amp=rattle_amp,
+            strain_range=strain_range,
+            shear_range=shear_range,
+            seed=seed,
+            a=a,
+        )
+        # ase.io.write with extxyz captures cell, pbc, per-atom forces, info dict
+        ase.io.write(str(cache_path), snapshots, format="extxyz")
+    atoms_list: list[ase.Atoms] = ase.io.read(str(cache_path), index=":")
+
+    # ASE's extxyz reader maps energy/forces/stress into a SinglePointCalculator
+    # rather than back to .info/.arrays.  Re-populate the canonical label fields
+    # so the caller sees the same interface as generate_cu_dataset produces.
+    for atoms in atoms_list:
+        if atoms.calc is not None:
+            results = atoms.calc.results
+            atoms.info["energy"] = float(results["energy"])
+            # Stress comes back from extxyz as a Voigt 6-vector; reshape to 3×3.
+            s_voigt = np.asarray(results["stress"])
+            atoms.info["stress"] = voigt_6_to_full_3x3_stress(s_voigt)
+            atoms.arrays["forces"] = np.asarray(results["forces"], dtype=np.float64)
+            atoms.calc = None
+
+    # Build deterministic train/val/test split (no shuffle — generation is already
+    # random; identical seeds give identical files).
+    n = len(atoms_list)
+    n_train = int(split_fractions[0] * n)
+    n_val = int(split_fractions[1] * n)
+    splits = ["train"] * n_train + ["val"] * n_val + ["test"] * (n - n_train - n_val)
+
+    rows = []
+    for i, atoms in enumerate(atoms_list):
+        f = atoms.arrays["forces"]
+        s = atoms.info["stress"]
+        rows.append(
+            {
+                "id": i,
+                "n_atoms": len(atoms),
+                "volume": float(atoms.get_volume()),
+                "energy": float(atoms.info["energy"]),
+                "force_norm_max": float(np.linalg.norm(f, axis=1).max()),
+                "stress_norm": float(np.linalg.norm(s)),
+                "split": splits[i],
+            }
+        )
+    return pl.DataFrame(rows), atoms_list
