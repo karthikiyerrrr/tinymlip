@@ -375,6 +375,27 @@ def _(mo):
 
     `tinymlip.train.energy_force_loss` returns `(loss_tensor, metrics_dict)`.
     The dict reports MAE in human-readable units alongside the scalar loss.
+
+    **`w_F = 100` is a starting point, not a derived truth.** Even after
+    MSE-scale balancing, the two terms can still compete — improving the
+    force fit can hurt the energy fit and vice versa. Production MLIPs
+    treat `w_F` as a tuned hyperparameter, typically in the range
+    **10–1000**, and usually force-dominant because forces are what drive
+    the downstream MD simulation. The `w_F` slider above lets you watch
+    the trade-off in real time.
+
+    <details>
+    <summary>Try it: set <code>w_F = 1</code>, then <code>w_F = 200</code>. What happens to energy MAE vs. force MAE over 30 epochs?</summary>
+
+    At `w_F = 1` the energy term overwhelmingly dominates the loss: energy
+    MAE drops further than at `w_F = 100`, but force MAE plateaus at a
+    much higher value — the optimizer effectively ignores forces because
+    their contribution to the loss is now about `1 / 2500` of the energy
+    contribution. At `w_F = 200` you see the opposite: force MAE drops
+    faster, energy MAE plateaus higher. That's the trade-off curve —
+    which point on it is "best" depends on what you're going to do with
+    the trained model.
+    </details>
     """)
     return
 
