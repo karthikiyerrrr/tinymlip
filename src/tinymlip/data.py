@@ -375,3 +375,42 @@ def load_cu_emt(
             }
         )
     return pl.DataFrame(rows), atoms_list
+
+
+class _CuEMTTorchDataset(Dataset):
+    """torch.utils.data.Dataset over a list of EMT-labeled Cu Atoms.
+
+    Each __getitem__ returns a dict with PBC-aware keys:
+      z [N], pos [N,3], cell [3,3], pbc [3] bool, energy scalar,
+      forces [N,3], stress [3,3].
+    Designed to feed `make_collate(cutoff)`, which builds the
+    PBC graph at DataLoader time.
+    """
+
+    def __init__(self, atoms_list: list[ase.Atoms], dtype: torch.dtype = torch.float32) -> None:
+        self.atoms_list = atoms_list
+        self.dtype = dtype
+
+    def __len__(self) -> int:
+        return len(self.atoms_list)
+
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
+        atoms = self.atoms_list[idx]
+        return {
+            "z": torch.as_tensor(atoms.numbers, dtype=torch.long),
+            "pos": torch.as_tensor(atoms.positions, dtype=self.dtype),
+            "cell": torch.as_tensor(atoms.cell.array, dtype=self.dtype),
+            "pbc": torch.as_tensor(atoms.pbc, dtype=torch.bool),
+            "energy": torch.as_tensor(atoms.info["energy"], dtype=self.dtype),
+            "forces": torch.as_tensor(atoms.arrays["forces"], dtype=self.dtype),
+            "stress": torch.as_tensor(atoms.info["stress"], dtype=self.dtype),
+        }
+
+
+def to_torch_dataset_cu_emt(
+    atoms_list: list[ase.Atoms],
+    *,
+    dtype: torch.dtype = torch.float32,
+) -> Dataset:
+    """Wrap a list of EMT-labeled Cu Atoms as a torch Dataset for nb06."""
+    return _CuEMTTorchDataset(atoms_list, dtype=dtype)

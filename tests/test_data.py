@@ -215,3 +215,24 @@ def test_make_collate_passes_stress_when_present():
     assert batch["stress"].shape == (2, 3, 3)
     torch.testing.assert_close(batch["stress"][0], torch.eye(3))
     torch.testing.assert_close(batch["stress"][1], 2 * torch.eye(3))
+
+
+def test_cu_emt_torch_dataset_emits_pbc_sample_dict(tmp_path):
+    from tinymlip.data import load_cu_emt, to_torch_dataset_cu_emt
+
+    meta, atoms = load_cu_emt(
+        cache_dir=str(tmp_path / "cu_emt"),
+        n_snapshots=4,
+        supercell=(1, 1, 1),
+        seed=0,
+    )
+    ds = to_torch_dataset_cu_emt(atoms)
+    sample = ds[0]
+
+    for key in ("z", "pos", "cell", "pbc", "energy", "forces", "stress"):
+        assert key in sample
+    assert sample["z"].dtype == torch.long
+    assert sample["pos"].shape == (4, 3)
+    assert sample["cell"].shape == (3, 3)
+    assert sample["stress"].shape == (3, 3)
+    assert sample["forces"].shape == (4, 3)
