@@ -456,6 +456,7 @@ def _(
     apply_atomic_reference,
     compute_forces,
     mo,
+    model,
     shifts,
     tiny,
     torch,
@@ -464,8 +465,10 @@ def _(
 ):
     from tinymlip.train import energy_force_loss
 
-    # Build the model (untrained). We will re-instantiate it for real training
-    # below so a slider change starts from fresh weights.
+    # Build a sanity model (untrained). We will compare its losses on one batch
+    # to the *trained* model defined further down the notebook — marimo's
+    # reactive graph routes the dependency cleanly, no matter that the trained
+    # model is defined later in source order.
     torch.manual_seed(0)
     sanity_model = InvariantMPNN(
         hidden_dim=tiny["hidden_dim"],
@@ -474,21 +477,38 @@ def _(
         n_layers=tiny["n_layers"],
     )
 
-    # One untrained forward on one batch from the training set.
+    # One forward on one batch from the training set.
     _sanity_batch = next(iter(train_loader))
     _g = _sanity_batch["graph"]
     _g.pos.requires_grad_(True)
 
-    _pred_e = sanity_model(_g)
-    _pred_f = compute_forces(_pred_e.sum(), _g.pos)
+    # Untrained model.
+    _pred_e_untrained = sanity_model(_g)
+    _pred_f_untrained = compute_forces(_pred_e_untrained.sum(), _g.pos)
 
     _ref = apply_atomic_reference(_g.z, _g.batch, shifts).to(_sanity_batch["energy"].dtype)
     _true_residual = _sanity_batch["energy"] - _ref
 
-    _, sanity_metrics = energy_force_loss(
-        _pred_e,
+    _, sanity_metrics_untrained = energy_force_loss(
+        _pred_e_untrained,
         _true_residual,
-        _pred_f,
+        _pred_f_untrained,
+        _sanity_batch["forces"],
+        _sanity_batch["n_atoms"],
+        w_e=tiny["w_e"],
+        w_f=w_f.value,
+    )
+
+    # Trained model — same batch, same loss function. (model is defined in a
+    # later cell; marimo's reactive graph handles the dependency.)
+    _g_t = _sanity_batch["graph"]
+    _g_t.pos.requires_grad_(True)
+    _pred_e_trained = model(_g_t)
+    _pred_f_trained = compute_forces(_pred_e_trained.sum(), _g_t.pos)
+    _, sanity_metrics_trained = energy_force_loss(
+        _pred_e_trained,
+        _true_residual,
+        _pred_f_trained,
         _sanity_batch["forces"],
         _sanity_batch["n_atoms"],
         w_e=tiny["w_e"],
@@ -496,13 +516,17 @@ def _(
     )
 
     mo.md(
-        f"### Untrained-model sanity numbers\n\n"
-        f"On one batch from the training set, BEFORE any training:\n\n"
-        f"- `loss` = `{sanity_metrics['loss']:.4f}`\n"
-        f"- per-atom `energy_mae` = `{sanity_metrics['energy_mae']:.4f}` kcal/mol/atom\n"
-        f"- `force_mae` = `{sanity_metrics['force_mae']:.4f}` kcal/mol/Å\n\n"
-        f"These should be large — the model is initialized randomly, so its energies "
-        f"have no relation to ethanol. The training loop below should pull them down."
+        f"### Sanity numbers on one training batch — before vs. after training\n\n"
+        f"|                            | untrained             | trained               |\n"
+        f"|----------------------------|-----------------------|-----------------------|\n"
+        f"| `loss`                     | `{sanity_metrics_untrained['loss']:.4f}` | `{sanity_metrics_trained['loss']:.4f}` |\n"
+        f"| per-atom `energy_mae`      | `{sanity_metrics_untrained['energy_mae']:.4f}` kcal/mol/atom | `{sanity_metrics_trained['energy_mae']:.4f}` kcal/mol/atom |\n"
+        f"| `force_mae`                | `{sanity_metrics_untrained['force_mae']:.4f}` kcal/mol/Å | `{sanity_metrics_trained['force_mae']:.4f}` kcal/mol/Å |\n\n"
+        f"The untrained model has no idea what ethanol is — its losses are large. "
+        f"After training, the same batch evaluated on the trained model has losses "
+        f"dropped by orders of magnitude. (The learning curves below show this "
+        f"happening epoch-by-epoch, but having it in one place makes the "
+        f"\"training did something\" moment unambiguous.)"
     )
     return
 
