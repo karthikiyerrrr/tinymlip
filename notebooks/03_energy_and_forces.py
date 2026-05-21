@@ -302,11 +302,28 @@ def _(mo):
     1. **The forces are conservative.** Anything that comes out of $-\nabla E$
        has zero curl, so the line integral around a closed loop in position
        space is zero. In molecular dynamics that means the NVE ensemble
-       conserves energy — a property real force fields must have and that
-       *separately predicted* forces don't generally satisfy.
+       conserves energy.
+
+       The *negative version* makes the property concrete: a force field whose
+       components were predicted directly (a "force head" emitting `[N, 3]`)
+       has no guarantee that $\partial F_x / \partial y = \partial F_y / \partial x$.
+       The curl is non-zero in general, so the work done around a closed loop
+       in configuration space is non-zero — an MD simulation can *gain or
+       lose energy from nothing* by cycling through a closed sequence of
+       geometries. In practice this shows up as steady energy drift in NVE,
+       and is the single reason the $F = -\nabla E$ architecture is
+       non-negotiable for MLIPs.
+
     2. **`torch.autograd.grad` does the bookkeeping.** As long as `graph.pos`
        is the autograd leaf (we set `requires_grad=True` on it before the
-       forward pass), one autograd call gives us all 3N force components.
+       forward pass), one autograd call gives us all $3N$ force components.
+
+       The one non-obvious flag in `compute_forces` is `create_graph=True`. It
+       keeps the autograd graph alive *through* the force computation, so
+       that notebook 04's force-matching loss — which depends on the
+       predicted forces — can backprop through them all the way to the model
+       parameters. Without it, the forces would still be numerically
+       correct, but they couldn't be trained on.
 
     We package that one line as `tinymlip.compute_forces(energy, pos)`. The
     forces below are from our **untrained** model, so their magnitudes and
@@ -314,6 +331,7 @@ def _(mo):
     right shape, and Σ F ≈ 0 (which we'll check explicitly in the next
     section).
     """)
+
     return
 
 
