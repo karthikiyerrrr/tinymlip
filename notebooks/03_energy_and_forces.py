@@ -101,7 +101,26 @@ def _(mo):
 
     Below, `atom_embeddings`, `atom_features`, `per_atom_energies`, and
     `energy` are the intermediate tensors at each step.
+
+    **Why a *learnable* embedding, and not just `z` itself?** Atomic number as a
+    scalar input would force the model to fight a structural fact: "carbon is
+    6× as much something as hydrogen" — an artefact of the periodic table, not
+    of chemistry. A one-hot vector avoids that but is wasteful; in fact, a
+    `Linear` layer applied to a one-hot vector is *mathematically identical* to
+    an `Embedding` table lookup — the embedding is just the efficient form.
+    Making the vector **learnable** lets the model decide *what about element
+    identity matters* for energy prediction (bond-length preferences,
+    electronegativity-like channels, etc.) instead of forcing us to
+    hand-engineer features. In notebook 04 these embedding vectors are trained,
+    and the post-training C vs H vectors become distinguishable in ways that
+    matter for energy.
+
+    **Where do the trained-filter bumps from notebook 02 live in this model?**
+    Inside each `InvariantInteraction.filter_net`. With `n_layers = 3` there are
+    three independent filter networks, each learning its own shape — they
+    compose to give the per-atom energy.
     """)
+
     return
 
 
@@ -113,7 +132,7 @@ def _(cutoff, graph, mo, n_layers, torch):
 
     torch.manual_seed(0)
     model = InvariantMPNN(
-        hidden_dim=32,                # features per atom (the size of each atom's feature vector — this is what "F" means in the shape comments below)
+        hidden_dim=32,                # features per atom; what "F" means in shape comments. h=32 is on the small end — literature MLIPs use 64-256.
         num_basis=8,
         cutoff=cutoff.value,
         n_layers=n_layers.value,
@@ -149,6 +168,7 @@ def _(cutoff, graph, mo, n_layers, torch):
         f"- readout: `{tuple(per_atom_energies.shape)}`\n"
         f"- sum: `{tuple(energy.shape)}` → scalar **E_total = {e_total:.4f}**"
     )
+
     return (
         InvariantMPNN,
         chemical_symbols,
