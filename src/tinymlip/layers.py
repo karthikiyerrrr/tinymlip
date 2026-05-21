@@ -195,6 +195,15 @@ class EquivariantInteraction(nn.Module):
         # ---- Message phase ----
         src, dst = graph.edge_index
         edge_vec = graph.pos[dst] - graph.pos[src]  # autograd: pos is leaf; [E, 3]
+        if graph.shift_idx is not None:
+            # Same pattern as InvariantInteraction: add S @ cell so the cell tensor
+            # is in the autograd graph (needed for stress via the strain trick).
+            shift_f = graph.shift_idx.to(edge_vec.dtype)  # [E, 3]
+            if graph.cell.ndim == 3:  # batched
+                cell_per_edge = graph.cell[graph.batch[src]]  # [E, 3, 3]
+                edge_vec = edge_vec + torch.einsum("ei,eij->ej", shift_f, cell_per_edge)
+            else:  # single graph
+                edge_vec = edge_vec + shift_f @ graph.cell
         r = edge_vec.norm(dim=-1).clamp(min=1e-6)  # [E]
         unit = edge_vec / r.unsqueeze(-1)  # [E, 3]
 

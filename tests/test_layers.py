@@ -282,3 +282,45 @@ def test_invariant_interaction_pbc_edge_vec_uses_shift():
     # Both paths should produce the same output: PBC with shift should match
     # the non-PBC case where positions are pre-unwrapped.
     assert torch.allclose(s_out_pbc, s_out_nonpbc, atol=1e-5)
+
+
+def test_equivariant_interaction_pbc_edge_vec_uses_shift():
+    """Equivariant analogue of test_invariant_interaction_pbc_edge_vec_uses_shift:
+    a PBC graph with non-trivial shift_idx produces the same output as an
+    equivalent non-PBC graph with unwrapped positions."""
+    import ase
+
+    from tinymlip.graph import build_graph
+
+    # PBC graph: atom 1 at (3.6, 0, 0) in a 4-Å cube; the periodic image at
+    # (-0.4, 0, 0) is within a 1-Å cutoff of atom 0 (dist = 0.4).
+    atoms_pbc = ase.Atoms(
+        numbers=[1, 1],
+        positions=[[0.0, 0.0, 0.0], [3.6, 0.0, 0.0]],
+        cell=[[4.0, 0, 0], [0, 4.0, 0], [0, 0, 4.0]],
+        pbc=True,
+    )
+    g_pbc = build_graph(atoms_pbc, cutoff=1.0)
+    assert g_pbc.shift_idx.abs().sum().item() > 0
+
+    # Non-PBC equivalent: place atom 1 at the unwrapped position (-0.4, 0, 0)
+    # so the edge_vec matches without needing shift_idx.
+    atoms_nonpbc = ase.Atoms(
+        numbers=[1, 1],
+        positions=[[0.0, 0.0, 0.0], [-0.4, 0.0, 0.0]],
+    )
+    g_nonpbc = build_graph(atoms_nonpbc, cutoff=1.0)
+    assert g_nonpbc.shift_idx is None
+
+    torch.manual_seed(0)
+    layer = EquivariantInteraction(hidden_dim=8, num_basis=16, cutoff=1.0)
+    s_in = torch.randn(2, 8)
+    v_in = torch.zeros(2, 8, 3)
+
+    s_out_pbc, v_out_pbc = layer(s_in, v_in, g_pbc)
+    s_out_nonpbc, v_out_nonpbc = layer(s_in, v_in, g_nonpbc)
+
+    # Both paths should produce the same output: PBC with shift should match
+    # the non-PBC case where positions are pre-unwrapped.
+    assert torch.allclose(s_out_pbc, s_out_nonpbc, atol=1e-5)
+    assert torch.allclose(v_out_pbc, v_out_nonpbc, atol=1e-5)
