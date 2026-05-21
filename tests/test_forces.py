@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import torch
 
 from tinymlip.forces import compute_forces
@@ -181,3 +183,63 @@ def test_equivariant_forces_match_numerical_gradient(ethanol_atoms):
     assert abs(numerical_force - autograd_force) < 1e-3, (
         f"numerical={numerical_force:.6f}, autograd={autograd_force:.6f}"
     )
+
+
+def test_compute_forces_and_stress_autograd_matches_numerical_strain_derivative():
+    """The strain-derivative formula σ = (1/V) ∂E/∂ε must match a central
+    finite-difference of the model energy under a manual strain on cell+pos."""
+    from ase import Atoms
+
+    from tinymlip.forces import compute_forces_and_stress
+
+    # Small FCC-Cu-like 4-atom cubic cell, random perturbation
+    a = 3.6
+    atoms = Atoms(
+        numbers=[29] * 4,
+        positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, a / 2, a / 2],
+            [a / 2, 0.0, a / 2],
+            [a / 2, a / 2, 0.0],
+        ],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    torch.manual_seed(0)
+    g = build_graph(atoms, cutoff=4.0, dtype=torch.float64)
+
+    model = EquivariantMPNN(n_layers=2, hidden_dim=8, num_basis=8, cutoff=4.0).double()
+
+    # Autograd stress
+    E_ad, F_ad, sigma_ad = compute_forces_and_stress(model, g)  # noqa: N806 — physics notation
+
+    # Numerical: deform manually for each independent strain component, ε=±h.
+    h = 1e-4
+
+    def E_at_strain(eps: torch.Tensor) -> torch.Tensor:  # noqa: N802 — E is standard for energy
+        # eps: [3, 3] symmetric
+        pos_def = g.pos + g.pos @ eps
+        cell_def = g.cell + g.cell @ eps
+        g_def = replace(g, pos=pos_def, cell=cell_def)
+        return model(g_def).sum()
+
+    sigma_num = torch.zeros(3, 3, dtype=torch.float64)
+    V = g.cell.det().abs().item()  # noqa: N806 — V for volume
+    for i in range(3):
+        for j in range(3):
+            eps_p = torch.zeros(3, 3, dtype=torch.float64)
+            eps_m = torch.zeros(3, 3, dtype=torch.float64)
+            # symmetric strain perturbation
+            eps_p[i, j] += h
+            eps_p[j, i] += h
+            eps_m[i, j] -= h
+            eps_m[j, i] -= h
+            E_p = E_at_strain(eps_p)  # noqa: N806 — E for energy
+            E_m = E_at_strain(eps_m)  # noqa: N806 — E for energy
+            # ∂E/∂ε_ij where ε is symmetric and we perturbed both (i,j) and (j,i)
+            # — so the finite-difference numerator already counts both, and we
+            # divide by 2h to recover the single-component derivative.
+            sigma_num[i, j] = (E_p - E_m) / (4 * h) / V
+    sigma_num = 0.5 * (sigma_num + sigma_num.T)
+
+    torch.testing.assert_close(sigma_ad, sigma_num, atol=1e-5, rtol=1e-3)
