@@ -521,14 +521,29 @@ def _(mo):
         log[epoch]    = {"train": train_metrics, "val": val_metrics}
     ```
 
-    The optimizer is plain `torch.optim.Adam(lr)`. We're skipping LR schedules,
-    EMA, gradient clipping, and other production niceties on purpose — the goal
-    is to see the loop, not to chase the last bit of accuracy.
+    The optimizer is plain `torch.optim.Adam(lr)`. Adam uses per-parameter
+    adaptive learning rates derived from running averages of the gradients;
+    it's the de facto default for these models because the loss landscape
+    across thousands of mixed-scale parameters is messy enough that plain
+    SGD needs careful LR tuning to match it. We're skipping LR schedules,
+    EMA, gradient clipping, and other production niceties on purpose — the
+    goal is to see the loop, not to chase the last bit of accuracy.
 
-    One thing worth flagging: **`evaluate` cannot use `torch.no_grad()`.**
-    Forces are derived via autograd through `graph.pos`, so the autograd graph
-    has to stay alive even when we're not updating parameters. We just don't
-    call `optimizer.step()`.
+    **One detail worth flagging on the forces.** The model returns a `[B]`
+    tensor of per-frame energies, and we call
+    `compute_forces(pred_e.sum(), pos)` to get gradients. The `.sum()` is
+    not mixing frames: the disjoint-union batching guarantees that no edges
+    connect atoms in different frames, so frame *i*'s energy has zero
+    dependency on frame *j*'s positions in the first place. `compute_forces`
+    just needs a scalar in its first argument, and the gradient separates
+    cleanly per frame.
+
+    **Why `evaluate` cannot use `torch.no_grad()`.** Forces are derived via
+    autograd through `graph.pos`, so the autograd graph has to stay alive
+    even during validation. We just don't call `optimizer.step()`. (On
+    ethanol this is cheap; for larger systems you would `.detach()` the
+    forces immediately after computing them and free the graph to keep
+    memory usage bounded.)
 
     Change a slider above and this cell re-runs end-to-end. On CPU the default
     `tiny` settings should finish in well under a minute.
