@@ -357,3 +357,32 @@ def test_build_graph_pbc_simple_cubic_two_atoms():
     # cell and pbc round-tripped onto the graph
     assert g.cell is not None and g.cell.shape == (3, 3)
     assert g.pbc == (True, True, True)
+
+
+def test_build_graph_pbc_translation_by_lattice_vector_invariant():
+    """Translating an atom by a lattice vector must not change the graph
+    structure: the set of (atom_a_pos_canonical, atom_b_pos_canonical, distance)
+    tuples must match before and after.
+    """
+    a = 4.0
+    atoms_a = Atoms(
+        numbers=[1, 1, 1],
+        positions=[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [0.0, 1.5, 0.0]],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    # Translate atom 1 by the +x lattice vector. Physically the same crystal.
+    atoms_b = atoms_a.copy()
+    atoms_b.positions[1] += np.array([a, 0.0, 0.0])
+
+    g_a = build_graph(atoms_a, cutoff=2.0)
+    g_b = build_graph(atoms_b, cutoff=2.0)
+
+    # Same number of edges
+    assert g_a.n_edges == g_b.n_edges
+
+    # Sorted multiset of edge distances must match (positions are the same modulo
+    # lattice translation; distances under PBC are an invariant).
+    da = torch.sort(g_a.edge_dist).values
+    db = torch.sort(g_b.edge_dist).values
+    torch.testing.assert_close(da, db, atol=1e-5, rtol=0)
