@@ -243,9 +243,20 @@ def _(mo):
       neighbor, and every H has just one heavy-atom neighbor, so the model
       can barely tell them apart. At `n_layers = 5`, the random init gets
       amplified through the extra stacks and the clean three-group picture
-      blurs. `n_layers = 3` is the sweet spot for this untrained demo;
-      after training, deeper models would tell a cleaner story.
+      blurs. *After training, deeper stacks resolve fine — the blur is
+      random-init noise compounding through depth, which the training loss
+      kills.* `n_layers = 3` is the sweet spot for this untrained demo.
+
+    **Caveat — these bars are not physical partial energies.** Only the
+    **sum** of the bars is fit to data; the per-atom partitioning is internal
+    bookkeeping, not a physical observable. A model that added $+5$ to every
+    C and subtracted $5\,N_C$ from one H would give the same total energy
+    and the same forces, with completely different bars. The clustering you
+    see *is* real — it's driven by message-passing on the graph — but the
+    *values* themselves are arbitrary. Treat the chart as a useful internal
+    view, not as a Mulliken / Hirshfeld-style partitioning.
     """)
+
     return
 
 
@@ -257,13 +268,24 @@ def _(mo):
     The molecular energy is the *sum* of per-atom contributions. That single
     choice gives the model a property real molecules have for free:
     **size-extensivity** — twice as much molecule, twice as much energy.
+    Conceptually, the readout is an **intensive** function applied
+    independently to each atom; summing it makes the molecular energy
+    **extensive**. That's the thermodynamic framing of the same statement.
 
     A model that pooled the per-atom features into one global vector and then
     passed it through a final MLP would NOT be size-extensive. Two copies of
     ethanol sitting 20 Å apart should give exactly twice the energy of one — and
     because the radial cutoff guarantees no edges between the copies, our sum
     delivers that automatically (no training required).
+
+    **One omission that real MLIPs add back.** Real MLIPs also subtract a
+    learned per-element reference energy $E_0(z)$ from each per-atom
+    contribution *before* summing. DFT total energies are dominated by the
+    keV-scale nuclear-charge baseline; the chemistry we actually want to learn
+    lives in the meV/atom remainder. Notebook 04 wires this in; we omit it
+    in notebook 03 so the readout reads as cleanly as possible.
     """)
+
     return
 
 
@@ -301,8 +323,15 @@ def _(atoms, build_graph, cutoff, graph, mo, model, torch):
         f"**E_dimer − 2·E_single** = `{extensivity_residual:.2e}`\n\n"
         f"That residual is essentially zero (machine precision in float32). The "
         f"sum readout + finite cutoff make this *structural*, not learned — it "
-        f"holds on the untrained model and would still hold after training."
+        f"holds on the untrained model and would still hold after training.\n\n"
+        f"Contrast with the MLP-on-flattened-coords baseline from notebook 01: "
+        f"that model would fail extensivity for a different reason. It has no "
+        f"notion of '20 Å apart from N atoms' — every input coordinate matters, "
+        f"and the dimer's energy would be a completely different learned function "
+        f"from the monomer's. There is no path for it to discover the additive "
+        f"structure that falls out of our architecture for free."
     )
+
     return (np,)
 
 
