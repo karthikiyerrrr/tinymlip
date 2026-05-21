@@ -116,16 +116,17 @@ def _(InvariantMPNN, torch):
 
 @app.cell(hide_code=True)
 def _(mo):
-    rotation_angle_deg = mo.ui.slider(
-        start=0,
-        stop=360,
-        step=5,
-        value=0,
-        label="rotation angle (deg, around z-axis)",
-        show_value=True,
+    rotation_x_deg = mo.ui.slider(
+        start=0, stop=360, step=5, value=0, label="rotate about x", show_value=True
     )
-    rotation_angle_deg
-    return (rotation_angle_deg,)
+    rotation_y_deg = mo.ui.slider(
+        start=0, stop=360, step=5, value=0, label="rotate about y", show_value=True
+    )
+    rotation_z_deg = mo.ui.slider(
+        start=0, stop=360, step=5, value=0, label="rotate about z", show_value=True
+    )
+    mo.vstack([rotation_x_deg, rotation_y_deg, rotation_z_deg])
+    return rotation_x_deg, rotation_y_deg, rotation_z_deg
 
 
 @app.cell(hide_code=True)
@@ -137,22 +138,31 @@ def _(
     hook_model,
     mo,
     np,
-    rotation_angle_deg,
+    rotation_x_deg,
+    rotation_y_deg,
+    rotation_z_deg,
     torch,
     water,
     water_cutoff,
 ):
     # Rotate H2O around z by the slider angle, run hook_model, collect forces
-    # and a few hidden scalars. Plot side-by-side.
-    _theta = float(rotation_angle_deg.value) * np.pi / 180.0
-    _R = torch.tensor(  # noqa: N806 — standard rotation notation
-        [
-            [np.cos(_theta), -np.sin(_theta), 0.0],
-            [np.sin(_theta), np.cos(_theta), 0.0],
-            [0.0, 0.0, 1.0],
-        ],
+    # and a few hidden scalars. Plot stacked: forces (3D) above, scalars (bars) below.
+    _ax = float(rotation_x_deg.value) * np.pi / 180.0
+    _ay = float(rotation_y_deg.value) * np.pi / 180.0
+    _az = float(rotation_z_deg.value) * np.pi / 180.0
+    _Rx = torch.tensor(  # noqa: N806 — standard rotation matrix notation
+        [[1.0, 0.0, 0.0], [0.0, np.cos(_ax), -np.sin(_ax)], [0.0, np.sin(_ax), np.cos(_ax)]],
         dtype=torch.float32,
     )
+    _Ry = torch.tensor(  # noqa: N806
+        [[np.cos(_ay), 0.0, np.sin(_ay)], [0.0, 1.0, 0.0], [-np.sin(_ay), 0.0, np.cos(_ay)]],
+        dtype=torch.float32,
+    )
+    _Rz = torch.tensor(  # noqa: N806
+        [[np.cos(_az), -np.sin(_az), 0.0], [np.sin(_az), np.cos(_az), 0.0], [0.0, 0.0, 1.0]],
+        dtype=torch.float32,
+    )
+    _R = _Rz @ _Ry @ _Rx  # noqa: N806 — extrinsic Rx → Ry → Rz composition
 
     _water_rot = water.copy()
     _water_rot.set_positions(water.get_positions() @ _R.numpy().T)
@@ -169,48 +179,115 @@ def _(
 
     _pos_np = _graph.pos.detach().numpy()
     _z_np = _graph.z.numpy()
+    _labels = {1: "H", 8: "O"}
 
-    _arrow_scale = 1.0
+    # Scale arrows so the largest is ~0.6 Å (visible relative to a ~1 Å molecule).
+    _max_f = float(max(np.linalg.norm(_forces, axis=-1).max(), 1e-9))
+    _arrow_scale = 0.6 / _max_f
+
+    # Visual bonds: any pair within the cutoff (covers O–H).
+    _bond_traces = []
+    for _i in range(_graph.n_atoms):
+        for _j in range(_i + 1, _graph.n_atoms):
+            if np.linalg.norm(_pos_np[_i] - _pos_np[_j]) < water_cutoff:
+                _bond_traces.append(
+                    go.Scatter3d(
+                        x=[_pos_np[_i, 0], _pos_np[_j, 0]],
+                        y=[_pos_np[_i, 1], _pos_np[_j, 1]],
+                        z=[_pos_np[_i, 2], _pos_np[_j, 2]],
+                        mode="lines",
+                        line=dict(color="#bbbbbb", width=4),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+
+    # Atom markers — outlined so the white H spheres are visible.
+    _atom_colors = [element_color(int(z)) for z in _z_np]
+    _atom_sizes = [20 if int(z) > 1 else 14 for z in _z_np]
+    _atom_labels = [_labels.get(int(z), str(int(z))) for z in _z_np]
+
     _atoms_trace = go.Scatter3d(
         x=_pos_np[:, 0],
         y=_pos_np[:, 1],
         z=_pos_np[:, 2],
-        mode="markers",
-        marker=dict(size=14, color=[element_color(int(z)) for z in _z_np]),
-        name="atoms",
+        mode="markers+text",
+        marker=dict(
+            size=_atom_sizes,
+            color=_atom_colors,
+            line=dict(color="#222", width=1.5),
+        ),
+        text=_atom_labels,
+        textposition="top center",
+        textfont=dict(color="#111", size=13),
+        showlegend=False,
+        hoverinfo="skip",
     )
-    _arrow_traces = []
-    for _k in range(_graph.n_atoms):
-        _start = _pos_np[_k]
-        _end = _start + _arrow_scale * _forces[_k]
-        _arrow_traces.append(
-            go.Scatter3d(
-                x=[_start[0], _end[0]],
-                y=[_start[1], _end[1]],
-                z=[_start[2], _end[2]],
-                mode="lines",
-                line=dict(color="crimson", width=6),
-                showlegend=False,
-            )
-        )
 
-    _left = go.Figure([_atoms_trace, *_arrow_traces])
+    # Force arrows: thin line shafts + cone heads (mirror nb04's pattern).
+    _tips = _pos_np + _arrow_scale * _forces
+    _sx, _sy, _sz = [], [], []
+    for _k in range(_graph.n_atoms):
+        _sx.extend([_pos_np[_k, 0], _tips[_k, 0], None])
+        _sy.extend([_pos_np[_k, 1], _tips[_k, 1], None])
+        _sz.extend([_pos_np[_k, 2], _tips[_k, 2], None])
+    _arrow_traces = [
+        go.Scatter3d(
+            x=_sx,
+            y=_sy,
+            z=_sz,
+            mode="lines",
+            line=dict(color="crimson", width=4),
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        go.Cone(
+            # Unit direction vectors so cone size stays constant across arrows.
+            x=_tips[:, 0],
+            y=_tips[:, 1],
+            z=_tips[:, 2],
+            u=_forces[:, 0] / np.linalg.norm(_forces, axis=-1).clip(min=1e-9),
+            v=_forces[:, 1] / np.linalg.norm(_forces, axis=-1).clip(min=1e-9),
+            w=_forces[:, 2] / np.linalg.norm(_forces, axis=-1).clip(min=1e-9),
+            anchor="tail",
+            sizemode="absolute",
+            sizeref=0.15,
+            colorscale=[[0, "crimson"], [1, "crimson"]],
+            showscale=False,
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+    ]
+
+    # Fixed axis ranges + cube aspect prevent the box from squishing as the
+    # molecule rotates. Turntable dragmode + a tilted initial camera mean
+    # user rotation feels natural and the z-rotation is clearly visible.
+    _left = go.Figure([*_bond_traces, _atoms_trace, *_arrow_traces])
     _left.update_layout(
         title="Forces (rotate with the molecule)",
-        scene=dict(aspectmode="data"),
+        scene=dict(
+            aspectmode="cube",
+            dragmode="turntable",
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.0)),
+            xaxis=dict(range=[-1.5, 1.5], title=""),
+            yaxis=dict(range=[-1.5, 1.5], title=""),
+            zaxis=dict(range=[-1.5, 1.5], title=""),
+        ),
         margin=dict(l=0, r=0, t=40, b=0),
-        height=380,
+        height=420,
     )
 
+    # Bars on a FIXED y-axis so "unchanged by rotation" is unambiguous —
+    # auto-ranging would re-center the bars even when their values are constant.
     _right = go.Figure(go.Bar(x=[f"ch{i}" for i in range(8)], y=_x0[:8]))
     _right.update_layout(
         title="Hidden scalars at atom 0 (unchanged by rotation)",
-        yaxis=dict(range=[float(_x0[:8].min()) - 0.5, float(_x0[:8].max()) + 0.5]),
-        height=380,
+        yaxis=dict(range=[-1.5, 1.5]),
+        height=300,
         margin=dict(l=40, r=10, t=40, b=40),
     )
 
-    mo.hstack([_left, _right])
+    mo.vstack([_left, _right])
     return
 
 
@@ -241,7 +318,7 @@ def _(mo):
 
 
 @app.cell
-def _(EquivariantInteraction, ase_molecule, build_graph, torch):
+def _(EquivariantInteraction, ase_molecule, build_graph, pl, torch):
     # Pick a slightly bigger molecule than H2O so the channel arrows have
     # interesting geometry to draw on.
     torch.manual_seed(0)
@@ -262,10 +339,22 @@ def _(EquivariantInteraction, ase_molecule, build_graph, torch):
         v0 = torch.zeros(graph_vec.n_atoms, F_vec, 3)
         s1, v1 = layer_vec(s0, v0, graph_vec)
 
-    print("s shape:", tuple(s1.shape))
-    print("v shape:", tuple(v1.shape))
-    print("v initial norm (zeros):", float(v0.norm()))
-    print("v after one layer norm (bootstrapped by creation message):", float(v1.norm()))
+    pl.DataFrame(
+        {
+            "quantity": [
+                "s shape",
+                "v shape",
+                "||v|| initial (zeros)",
+                "||v|| after one layer (bootstrapped by creation message)",
+            ],
+            "value": [
+                str(tuple(s1.shape)),
+                str(tuple(v1.shape)),
+                f"{float(v0.norm()):.4f}",
+                f"{float(v1.norm()):.4f}",
+            ],
+        }
+    )
     return F_vec, graph_vec, layer_vec, s0, v1
 
 
@@ -287,37 +376,100 @@ def _(element_color, go, graph_vec, np, v1, vec_channel):
     _z = graph_vec.z.numpy()
     _v_ch = v1[:, _ch, :].detach().numpy()  # [N, 3] — one channel as a vector per atom
 
-    # Scale arrows for visibility.
-    # Normalize so the largest arrow has length ~1.5 Å, keeping atom geometry legible.
-    _scale = 1.5 / max(np.linalg.norm(_v_ch, axis=-1).max(), 1e-6)
+    # Scale arrows so the largest is ~1.0 Å (visible against CH3OH which spans ~2 Å).
+    _max_v = float(max(np.linalg.norm(_v_ch, axis=-1).max(), 1e-9))
+    _scale = 1.0 / _max_v
+
+    # Element labels for the atoms in scope (CH3OH = C, O, H).
+    _labels_ch = {1: "H", 6: "C", 8: "O"}
+
+    # Visual bonds: any pair within a generous covalent cutoff (1.6 Å covers
+    # C–H ~ 1.09, C–O ~ 1.43, O–H ~ 0.96).
+    _bond_traces_ch = []
+    for _i in range(graph_vec.n_atoms):
+        for _j in range(_i + 1, graph_vec.n_atoms):
+            if np.linalg.norm(_pos[_i] - _pos[_j]) < 1.6:
+                _bond_traces_ch.append(
+                    go.Scatter3d(
+                        x=[_pos[_i, 0], _pos[_j, 0]],
+                        y=[_pos[_i, 1], _pos[_j, 1]],
+                        z=[_pos[_i, 2], _pos[_j, 2]],
+                        mode="lines",
+                        line=dict(color="#bbbbbb", width=4),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+
+    # Atom markers — outlined so the white H spheres are visible.
+    _atom_colors_ch = [element_color(int(z)) for z in _z]
+    _atom_sizes_ch = [20 if int(z) > 1 else 14 for z in _z]
+    _atom_labels_ch = [_labels_ch.get(int(z), str(int(z))) for z in _z]
 
     _atoms_p = go.Scatter3d(
         x=_pos[:, 0],
         y=_pos[:, 1],
         z=_pos[:, 2],
-        mode="markers",
-        marker=dict(size=14, color=[element_color(int(z)) for z in _z]),
-        name="atoms",
+        mode="markers+text",
+        marker=dict(
+            size=_atom_sizes_ch,
+            color=_atom_colors_ch,
+            line=dict(color="#222", width=1.5),
+        ),
+        text=_atom_labels_ch,
+        textposition="top center",
+        textfont=dict(color="#111", size=13),
+        showlegend=False,
+        hoverinfo="skip",
     )
-    _arrow_traces = []
-    for _k in range(graph_vec.n_atoms):
-        _start = _pos[_k]
-        _end = _start + _scale * _v_ch[_k]
-        _arrow_traces.append(
-            go.Scatter3d(
-                x=[_start[0], _end[0]],
-                y=[_start[1], _end[1]],
-                z=[_start[2], _end[2]],
-                mode="lines",
-                line=dict(color="royalblue", width=5),
-                showlegend=False,
-            )
-        )
 
-    _fig_ch = go.Figure([_atoms_p, *_arrow_traces])
+    # Vector-channel arrows: line shafts + cone heads.
+    _tips_ch = _pos + _scale * _v_ch
+    _sx, _sy, _sz = [], [], []
+    for _k in range(graph_vec.n_atoms):
+        _sx.extend([_pos[_k, 0], _tips_ch[_k, 0], None])
+        _sy.extend([_pos[_k, 1], _tips_ch[_k, 1], None])
+        _sz.extend([_pos[_k, 2], _tips_ch[_k, 2], None])
+    _arrow_traces = [
+        go.Scatter3d(
+            x=_sx,
+            y=_sy,
+            z=_sz,
+            mode="lines",
+            line=dict(color="royalblue", width=4),
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        go.Cone(
+            # Unit direction vectors so cone size doesn't shrink with arrow magnitude.
+            x=_tips_ch[:, 0],
+            y=_tips_ch[:, 1],
+            z=_tips_ch[:, 2],
+            u=_v_ch[:, 0] / np.linalg.norm(_v_ch, axis=-1, keepdims=False).clip(min=1e-9),
+            v=_v_ch[:, 1] / np.linalg.norm(_v_ch, axis=-1, keepdims=False).clip(min=1e-9),
+            w=_v_ch[:, 2] / np.linalg.norm(_v_ch, axis=-1, keepdims=False).clip(min=1e-9),
+            anchor="tail",
+            sizemode="absolute",
+            sizeref=0.2,
+            colorscale=[[0, "royalblue"], [1, "royalblue"]],
+            showscale=False,
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+    ]
+
+    # Fixed cube viewport + turntable + tilted camera so rotation is intuitive.
+    _fig_ch = go.Figure([*_bond_traces_ch, _atoms_p, *_arrow_traces])
     _fig_ch.update_layout(
         title=f"v[:, {_ch}, :] — directional fingerprint, channel {_ch}",
-        scene=dict(aspectmode="data"),
+        scene=dict(
+            aspectmode="cube",
+            dragmode="turntable",
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.0)),
+            xaxis=dict(range=[-2.5, 2.5], title=""),
+            yaxis=dict(range=[-2.5, 2.5], title=""),
+            zaxis=dict(range=[-2.5, 2.5], title=""),
+        ),
         margin=dict(l=0, r=0, t=40, b=0),
         height=420,
     )
@@ -351,7 +503,7 @@ def _(mo):
 
 
 @app.cell
-def _(F_vec, graph_vec, layer_vec, s0, torch):
+def _(F_vec, graph_vec, layer_vec, pl, s0, torch):
     # Reuse layer_vec, graph_vec, s0 from section 2.
     src, dst = graph_vec.edge_index  # [E], [E]
     edge_vec = graph_vec.pos[dst] - graph_vec.pos[src]  # [E, 3]
@@ -375,10 +527,22 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
         s_after_msg = s0 + ds
         v_after_msg = v_in + dv
 
-    print("Δs norm:", float(ds.norm()))
-    print("m_vv contribution to Δv (should be 0 since v_in=0):", float(m_vv.norm()))
-    print("m_vs contribution to Δv:", float(m_vs.norm()))
-    print("v after message phase norm:", float(v_after_msg.norm()))
+    pl.DataFrame(
+        {
+            "message": [
+                "Δs (aggregated scalar messages)",
+                "m_vv contribution to Δv  — zero, since v_in = 0",
+                "m_vs contribution to Δv  — creation message",
+                "v after message phase",
+            ],
+            "norm": [
+                float(ds.norm()),
+                float(m_vv.norm()),
+                float(m_vs.norm()),
+                float(v_after_msg.norm()),
+            ],
+        }
+    )
     return s_after_msg, v_after_msg, v_in
 
 
@@ -387,7 +551,9 @@ def _(
     AtomGraph,
     graph_vec,
     layer_vec,
+    mo,
     np,
+    pl,
     s0,
     s_after_msg,
     torch,
@@ -441,12 +607,25 @@ def _(
     scalar_drift = float((s_after_msg_r - s_after_msg).abs().max())
     vector_residual = float((v_after_msg_r - v_after_msg @ R.T).abs().max())
 
-    print(f"max scalar drift under rotation: {scalar_drift:.2e}  (expect ~0)")
-    print(f"max vector residual after rotating output: {vector_residual:.2e}  (expect ~0)")
     assert scalar_drift < 1e-5, "scalar features changed under rotation — bug!"
     assert vector_residual < 1e-5, "vectors did not rotate as expected — bug!"
-    print(
-        "\nOK — message phase is rotation-equivariant. Scalars are invariant, vectors rotate with the molecule."
+
+    mo.vstack(
+        [
+            pl.DataFrame(
+                {
+                    "check": [
+                        "max scalar drift under rotation",
+                        "max vector residual after rotating output",
+                    ],
+                    "value": [scalar_drift, vector_residual],
+                    "expect": ["~0", "~0"],
+                }
+            ),
+            mo.md(
+                "**OK — message phase is rotation-equivariant.** Scalars are invariant; vectors rotate with the molecule."
+            ),
+        ]
     )
     return
 
@@ -486,7 +665,7 @@ def _(mo):
 
 
 @app.cell
-def _(F_vec, graph_vec, layer_vec, s0, torch):
+def _(F_vec, graph_vec, layer_vec, mo, pl, s0, torch):
     # Run the full layer (message + update). We'll inspect the update-phase
     # intermediates by reaching into the layer's modules.
     torch.manual_seed(0)
@@ -516,20 +695,39 @@ def _(F_vec, graph_vec, layer_vec, s0, torch):
         vnorm = Vv.norm(dim=-1)  # [N, F]
         vdot = (Uv * Vv).sum(dim=-1)  # [N, F]
 
-    print("Uv shape:", tuple(Uv.shape))
-    print("Vv shape:", tuple(Vv.shape))
-    print(
-        "||Vv|| per (atom, channel) shape:",
-        tuple(vnorm.shape),
-        "  sample [0, :4]:",
-        vnorm[0, :4].tolist(),
+    mo.vstack(
+        [
+            pl.DataFrame(
+                {
+                    "tensor": ["Uv", "Vv", "||Vv||", "<Uv, Vv>"],
+                    "shape": [
+                        str(tuple(Uv.shape)),
+                        str(tuple(Vv.shape)),
+                        str(tuple(vnorm.shape)),
+                        str(tuple(vdot.shape)),
+                    ],
+                    "meaning": [
+                        "vectors after U mixer",
+                        "vectors after V mixer",
+                        "rotation-invariant scalar per channel",
+                        "rotation-invariant scalar per channel",
+                    ],
+                }
+            ),
+            pl.DataFrame(
+                {
+                    "channel": [0, 1, 2, 3],
+                    "||Vv|| at atom 0": vnorm[0, :4].tolist(),
+                    "<Uv, Vv> at atom 0": vdot[0, :4].tolist(),
+                }
+            ),
+        ]
     )
-    print("<Uv, Vv> shape:", tuple(vdot.shape), "  sample [0, :4]:", vdot[0, :4].tolist())
     return
 
 
 @app.cell
-def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, np, torch):
+def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, mo, np, pl, torch):
     # Build a full EquivariantMPNN, energy-check on rotation.
     torch.manual_seed(0)
     _mol_check = ase_molecule("CH3OH")
@@ -554,10 +752,24 @@ def _(EquivariantMPNN, F_vec, ase_molecule, build_graph, np, torch):
     _graph_dr = build_graph(_mol_rot, cutoff=_check_cutoff, dtype=torch.float64)
     _e_rot = _check_model(_graph_dr)
 
-    print(f"E(original)  = {_e_orig.item():.10f}")
-    print(f"E(rotated)   = {_e_rot.item():.10f}")
-    print(f"|ΔE|         = {abs(_e_orig.item() - _e_rot.item()):.2e}  (expect < 1e-8)")
-    assert abs(_e_orig.item() - _e_rot.item()) < 1e-8
+    _de = abs(_e_orig.item() - _e_rot.item())
+    assert _de < 1e-8
+
+    mo.vstack(
+        [
+            pl.DataFrame(
+                {
+                    "quantity": ["E(original)", "E(rotated)", "|ΔE|  (expect < 1e-8)"],
+                    "value (kcal/mol)": [
+                        f"{_e_orig.item():.10f}",
+                        f"{_e_rot.item():.10f}",
+                        f"{_de:.2e}",
+                    ],
+                }
+            ),
+            mo.md("The full model's energy is rotation-invariant to machine precision."),
+        ]
+    )
     return
 
 
