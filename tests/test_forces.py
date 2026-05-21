@@ -185,6 +185,27 @@ def test_equivariant_forces_match_numerical_gradient(ethanol_atoms):
     )
 
 
+def test_compute_forces_and_stress_rejects_non_pbc_graph():
+    """A non-PBC graph has cell=None; the function must raise a clear error
+    rather than crashing on a NoneType attribute access."""
+    import pytest
+    from ase import Atoms
+
+    from tinymlip.forces import compute_forces_and_stress
+    from tinymlip.models import EquivariantMPNN
+
+    # Molecule (no cell, no PBC)
+    atoms = Atoms(numbers=[1, 1], positions=[[0.0, 0.0, 0.0], [0.74, 0.0, 0.0]])
+    g = build_graph(atoms, cutoff=2.0)
+    assert g.cell is None  # sanity
+
+    torch.manual_seed(0)
+    model = EquivariantMPNN(n_layers=1, hidden_dim=8, num_basis=8, cutoff=2.0)
+
+    with pytest.raises(ValueError, match="requires a PBC graph"):
+        compute_forces_and_stress(model, g)
+
+
 def test_compute_forces_and_stress_autograd_matches_numerical_strain_derivative():
     """The strain-derivative formula σ = (1/V) ∂E/∂ε must match a central
     finite-difference of the model energy under a manual strain on cell+pos."""

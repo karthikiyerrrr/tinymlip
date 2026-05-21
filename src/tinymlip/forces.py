@@ -67,6 +67,12 @@ def compute_forces_and_stress(
         F:     [N, 3] forces.
         sigma: [3, 3] symmetric stress (single graph) or [B, 3, 3] (batched).
     """
+    if graph.cell is None:
+        raise ValueError(
+            "compute_forces_and_stress requires a PBC graph (graph.cell must not be None). "
+            "Ensure the input was built from atoms with `pbc=True` and a cell."
+        )
+
     # Detach pos/cell from any prior graph and re-attach via fresh leaves.
     pos = graph.pos.detach().clone().requires_grad_(True)
     cell = graph.cell.detach().clone()  # [3, 3] (single) or [B, 3, 3] (batched)
