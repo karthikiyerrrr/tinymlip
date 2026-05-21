@@ -178,18 +178,21 @@ def _step(
     """Single forward pass: energy + autograd forces (+ stress when requested) + weighted loss.
 
     Used by both train_one_epoch (with backward) and evaluate (without).
+    pos.requires_grad_ is set BEFORE the forward so compute_forces works.
 
-    When w_s > 0 and the batch contains a "stress" key, routes through
-    compute_forces_and_stress so that the virial / cell gradient is computed
-    via autograd over the strain variable. Otherwise falls back to the original
-    pos.requires_grad_ path used by nb04/nb05 — bit-identical behaviour when
-    w_s == 0.
+    We call .sum() on the per-frame energies before passing to compute_forces
+    because compute_forces wants a scalar; per-frame forces are recovered
+    correctly because the disjoint-union batching guarantees no cross-frame
+    edges, so each atom's force only depends on its own frame's energy.
 
-    We call .sum() on the per-frame energies in the non-stress path before
-    passing to compute_forces because compute_forces wants a scalar; per-frame
-    forces are recovered correctly because the disjoint-union batching
-    guarantees no cross-frame edges, so each atom's force only depends on its
-    own frame's energy.
+    Routing:
+    - w_s == 0: original non-stress path; bit-identical to pre-PBC behaviour.
+    - w_s > 0 AND "stress" in batch: routes through compute_forces_and_stress
+      so the cell tensor is in the autograd graph and stress is computed.
+    - w_s > 0 AND "stress" NOT in batch: falls through to the non-stress path
+      with pred_stress=None, and energy_force_loss raises
+      ValueError("w_s>0 requires pred_stress and true_stress"). Pass stress
+      labels in the batch when you want stress training.
     """
     graph = batch["graph"]
 
