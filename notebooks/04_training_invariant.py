@@ -777,10 +777,24 @@ def _(
     test_energy_mae = float(np.abs(e_pred - e_true).mean()) / 9  # 9 atoms per ethanol
     test_force_mae = float(np.abs(f_pred - f_true).mean())
 
+    # Typical |F| magnitudes on bonded atoms (rough order of magnitude).
+    _typical_force_lo, _typical_force_hi = 10.0, 50.0
+    _rel_lo = 100.0 * test_force_mae / _typical_force_hi
+    _rel_hi = 100.0 * test_force_mae / _typical_force_lo
+
     mo.md(
         f"**Test set ({len(e_true)} frames):** "
         f"per-atom `energy_mae = {test_energy_mae:.4f}` kcal/mol/atom &nbsp;·&nbsp; "
-        f"`force_mae = {test_force_mae:.4f}` kcal/mol/Å"
+        f"`force_mae = {test_force_mae:.4f}` kcal/mol/Å\n\n"
+        f"**Is that good?** Literature MLIPs on rMD17 ethanol report force "
+        f"MAE in the **0.5–1.5 kcal/mol/Å** range with comparable training "
+        f"budgets (state-of-the-art equivariant models reach roughly 0.2). "
+        f"Typical force magnitudes on bonded atoms near equilibrium are "
+        f"10–50 kcal/mol/Å, so our `{test_force_mae:.2f}` kcal/mol/Å is "
+        f"roughly **{_rel_lo:.0f}–{_rel_hi:.0f}% relative error** — useful "
+        f"for short MD trajectories, not yet competitive with production "
+        f"force fields. The `small.yaml` / `default.yaml` configs and the "
+        f"equivariant model in notebook 05 close most of that gap."
     )
     return e_pred, e_true, f_pred, f_true, test_energy_mae, test_force_mae
 
