@@ -314,6 +314,12 @@ def _(mo):
     mo.md(r"""
     ## 2. Vector features on atoms
 
+    Section 1 used H₂O — three atoms, easy to read under rotation. Here we
+    switch to **CH₃OH (6 atoms)** so the directional channels have
+    interesting geometry to draw on without the visual clutter of
+    ethanol's 9 atoms. Section 5 trains on ethanol to stay aligned with
+    nb04's preset.
+
     PaiNN gives every atom **two** feature tensors:
 
     ```
@@ -323,14 +329,50 @@ def _(mo):
 
     `v` starts at zero. The first time we call an `EquivariantInteraction`,
     `v` gets bootstrapped by the **creation message**: a vector built from
-    each edge's direction `unit_ij = (pos_j - pos_i) / r_ij`, scaled by a
-    learned scalar weight on the sender's `s`. After the first layer,
-    subsequent layers can both *create* new vectors and *propagate* the
-    existing ones along edges.
+    each edge's direction $\hat{r}_{ij} = (\mathbf{r}_j - \mathbf{r}_i) / r_{ij}$,
+    scaled by a learned scalar weight on the sender's `s`. After the
+    first layer, subsequent layers can both *create* new vectors and
+    *propagate* the existing ones along edges.
 
-    Each channel of `v` is a learned "directional fingerprint" of the
-    local environment of atom $i$ — pick a channel below to see it drawn
-    on the molecule.
+    **What does $v[i, c, :]$ physically represent?** Set every scalar
+    weight to 1 for a moment, and you get $v[i, c, :] = \sum_j \hat{r}_{ij}$
+    — the sum of unit vectors from atom $i$ to its neighbours. That has
+    a name in chemistry: it's a **local dipole-like indicator**, a measure
+    of how asymmetrically neighbours are distributed around atom $i$. If
+    $i$ sits at a centre of symmetry (a methyl carbon with three
+    equivalent H's around it), the sum is small. If $i$ is at the end
+    of a bond pointing outward (the O–H hydrogen), the sum is large
+    and points along the asymmetry axis. So $v[i, c, :]$ after one
+    layer is **a learnable, distance-weighted local dipole-like vector**
+    at atom $i$. Each channel learns a different weighting; some
+    emphasise close neighbours (sharp local frame), others emphasise
+    medium-range asymmetry. After several layers, propagation along
+    edges turns these into non-local features (e.g. "the direction of
+    the nearest electronegative atom three bonds away").
+
+    **Caveat.** The channels you'll see below are from an **untrained**
+    `EquivariantInteraction` — random projections of the local geometry.
+    After training, channels specialise: some pick up the bond-axis
+    direction, others the asymmetry-toward-electronegative-atoms
+    direction. We keep the visualisation untrained so the channels stay
+    independent of the optimiser; the *shape* of each channel —
+    per-atom vectors that rotate correctly with the molecule — is what
+    we want to see.
+
+    Pick a channel below to see it drawn on the molecule.
+
+    <details>
+    <summary><b>Try this:</b> compare channel 0 to channel 7 — do the
+    arrows point the same direction?</summary>
+
+    No. Different channels use different learned scalar weights
+    $\psi^{vs}(s_j) \cdot \phi^{vs}(r_{ij})$ on the edge directions, so
+    each channel produces a different weighted sum of $\hat{r}_{ij}$.
+    Different weights, different "directional fingerprints" of the same
+    local environment. That's exactly the expressivity gain over a
+    scalar-only architecture: the model now has $F$ learned directions
+    per atom, not just $F$ learned numbers.
+    </details>
     """)
     return
 
@@ -378,10 +420,8 @@ def _(EquivariantInteraction, ase_molecule, build_graph, pl, torch):
 
 @app.cell(hide_code=True)
 def _(F_vec, mo):
-    vec_channel = mo.ui.dropdown(
-        options=[str(i) for i in range(F_vec)],
-        value="0",
-        label="v channel",
+    vec_channel = mo.ui.slider(
+        start=0, stop=F_vec - 1, step=1, value=0, label="v channel", show_value=True
     )
     vec_channel
     return (vec_channel,)
