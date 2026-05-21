@@ -566,7 +566,11 @@ def _(
     val_loader,
     w_f,
 ):
-    # Fresh model — every slider change starts from the same initial weights.
+    # Fresh model on every slider change. Re-seeding with the same
+    # `torch.manual_seed(0)` and rebuilding the model means lr / n_epochs /
+    # batch_size / w_F comparisons all start from identical initial weights,
+    # so what you're seeing across slider settings is the optimizer's effect,
+    # not initialization variance.
     torch.manual_seed(0)
     model = InvariantMPNN(
         hidden_dim=tiny["hidden_dim"],
