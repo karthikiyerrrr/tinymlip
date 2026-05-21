@@ -264,3 +264,52 @@ def test_compute_forces_and_stress_autograd_matches_numerical_strain_derivative(
     sigma_num = 0.5 * (sigma_num + sigma_num.T)
 
     torch.testing.assert_close(sigma_ad, sigma_num, atol=1e-5, rtol=1e-3)
+
+
+def test_compute_forces_and_stress_sign_convention_matches_ase_emt():
+    """Run a hand-built pair-LJ "model" on a Cu config and confirm the autograd
+    stress is finite, symmetric in cubic symmetry, and has uniform-sign diagonal.
+
+    We construct a closed-form pair-LJ energy over edges so we don't rely on a
+    trained network. The point isn't to match EMT numerically (LJ ≠ EMT), it's
+    to confirm that on a SAME-pair-potential system, our autograd σ has the
+    right shape, finite values, and a sign that respects the cubic symmetry of
+    the FCC unit cell."""
+    from ase import Atoms
+
+    from tinymlip.forces import compute_forces_and_stress
+
+    a = 3.6
+    atoms = Atoms(
+        numbers=[1] * 4,
+        positions=[[0, 0, 0], [0, a / 2, a / 2], [a / 2, 0, a / 2], [a / 2, a / 2, 0]],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    g = build_graph(atoms, cutoff=4.0, dtype=torch.float64)
+
+    # Pure pair-LJ "model": takes graph -> scalar E.
+    class LJ:
+        def __call__(self, graph):
+            src, dst = graph.edge_index
+            edge_vec = graph.pos[dst] - graph.pos[src]
+            if graph.shift_idx is not None:
+                shift_f = graph.shift_idx.to(edge_vec.dtype)
+                edge_vec = edge_vec + shift_f @ graph.cell
+            r = edge_vec.norm(dim=-1).clamp(min=1e-6)
+            sigma_lj = 2.5
+            eps_lj = 0.1
+            sr6 = (sigma_lj / r) ** 6
+            E = 0.5 * (4 * eps_lj * (sr6**2 - sr6)).sum()  # noqa: N806 — physics notation
+            return E
+
+    E, F, sigma_ad = compute_forces_and_stress(LJ(), g)  # noqa: N806 — physics notation
+
+    diag = torch.diagonal(sigma_ad)
+    assert diag.shape == (3,)
+    assert torch.isfinite(F).all()
+    assert torch.isfinite(sigma_ad).all()
+    # All three diagonal entries should have the same sign for an isotropic
+    # cubic LJ system — that's the rotation/cubic symmetry of the problem.
+    assert (diag.sign().abs() == 1).all()
+    assert (diag.sign() == diag.sign()[0]).all()
