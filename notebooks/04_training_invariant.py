@@ -216,6 +216,7 @@ def _(mo):
     SchNetPack's `RemoveOffsets` / `AddOffsets`) is to fit a per-element
     offset on the training set and *subtract* it from every target before
     training, so the model only ever sees small *residuals* (~kcal/mol).
+    This is the $E_0(z)$ shift notebook 03 forward-referenced.
 
     The fit is a one-line linear regression:
 
@@ -226,6 +227,22 @@ def _(mo):
     where $n_z(\text{frame})$ counts atoms of element $z$ in the frame and
     $s_z$ is the per-element offset we learn. `fit_atomic_reference` solves
     this via `np.linalg.lstsq` and returns `{z: s_z}`.
+
+    **A caveat on what these numbers mean.** Every ethanol frame has
+    composition C₂H₆O, so every row of the design matrix is `[2, 6, 1]` —
+    the linear system is rank-1, and `np.linalg.lstsq` returns the
+    minimum-norm solution. Only the composition-weighted sum
+    `2·s_C + 6·s_H + s_O` is identified by the data; the individual values
+    shouldn't be read as physical per-element binding energies. They become
+    physically meaningful when the dataset spans multiple compositions
+    (notebook 06's crystals).
+
+    **The shift does not bias force learning.** It depends on atomic
+    numbers only, not positions, so $\partial(\text{shift}) / \partial \mathbf{r} = 0$.
+    Forces are unaffected; only the energy target gets shifted. This is
+    also why the `w_E = 1`, `w_F = 100` balance below lands cleanly — the
+    shift makes the energy loss well-conditioned without touching the force
+    loss at all.
     """)
     return
 
