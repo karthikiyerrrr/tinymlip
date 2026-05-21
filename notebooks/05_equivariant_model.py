@@ -52,7 +52,7 @@ def _():
 
     from tinymlip.data import load_rmd17, make_collate, to_torch_dataset
     from tinymlip.forces import compute_forces
-    from tinymlip.graph import AtomGraph, build_graph
+    from tinymlip.graph import build_graph
     from tinymlip.layers import EquivariantInteraction
     from tinymlip.models import EquivariantMPNN, InvariantMPNN
     from tinymlip.train import fit_atomic_reference, train
