@@ -633,6 +633,33 @@ def _(
 
 
 @app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Reading the curves
+
+    A healthy learning curve typically shows a fast initial drop in the
+    first ~5 epochs (the model finds the residual structure quickly), then
+    a slower power-law-ish decay as it refines the per-atom contributions.
+    Both train and val curves dropping together = the model is learning
+    generalizable structure. Val flattening while train keeps dropping =
+    overfitting. A flat curve from epoch 0 means the learning rate is too
+    small; a chaotic / non-monotonic curve means it's too large.
+
+    <details>
+    <summary>Try it: drop <code>n_epochs</code> to 5. Do the val curves still look converged?</summary>
+
+    No — both energies and forces are still actively dropping at 5 epochs.
+    The log scale on the y-axis makes the first few epochs visually huge
+    and the later ones visually tiny, but in absolute terms most of the
+    gain still comes from epochs 5–30. Going much past 30 on the `tiny`
+    preset gives diminishing returns; that's where you'd reach for the
+    `small` or `default` configs.
+    </details>
+    """)
+    return
+
+
+@app.cell(hide_code=True)
 def _(go, history, make_subplots, pl):
     fig_curves = make_subplots(
         rows=1,
