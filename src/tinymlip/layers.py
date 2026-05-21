@@ -81,7 +81,16 @@ class InvariantInteraction(nn.Module):
 
         # Recompute edge_vec from graph.pos so that pos remains the autograd
         # leaf. Notebook 03 will use this for force = -dE/dpos.
+        # Under PBC, also add the lattice offset from shift_idx so the cell
+        # tensor is in the autograd graph too (needed for stress).
         edge_vec = graph.pos[dst] - graph.pos[src]  # [E, 3]
+        if graph.shift_idx is not None:
+            shift_f = graph.shift_idx.to(edge_vec.dtype)  # [E, 3]
+            if graph.cell.ndim == 3:  # batched: [B, 3, 3]
+                cell_per_edge = graph.cell[graph.batch[src]]  # [E, 3, 3]
+                edge_vec = edge_vec + torch.einsum("ei,eij->ej", shift_f, cell_per_edge)
+            else:  # single graph: [3, 3]
+                edge_vec = edge_vec + shift_f @ graph.cell
         r = edge_vec.norm(dim=-1).clamp(min=1e-6)  # [E]
 
         rbf = self.basis(r) * self.envelope(r).unsqueeze(-1)  # [E, num_basis]

@@ -238,3 +238,47 @@ def test_atomic_readout_shape_and_independence():
     y2 = readout(x2)
     assert torch.allclose(y[3], y2[3])
     assert not torch.allclose(y[0], y2[0])
+
+
+def test_invariant_interaction_pbc_edge_vec_uses_shift():
+    """A two-atom PBC system: an edge across the periodic boundary should
+    produce the same hidden update whether we read edge_vec from the cached
+    tensor or recompute it from pos + S @ cell. We test by comparing the
+    forward output between a graph where shift_idx is set (PBC) and an
+    equivalent non-PBC graph where the second atom is placed at the unwrapped
+    position so edge_vec matches without needing the shift."""
+    import ase
+
+    from tinymlip.graph import build_graph
+
+    # PBC graph: atom 1 at (3.6, 0, 0) in a 4-Å cube; the periodic image at
+    # (-0.4, 0, 0) is within a 1-Å cutoff of atom 0 (dist = 0.4).
+    atoms_pbc = ase.Atoms(
+        numbers=[1, 1],
+        positions=[[0.0, 0.0, 0.0], [3.6, 0.0, 0.0]],
+        cell=[[4.0, 0, 0], [0, 4.0, 0], [0, 0, 4.0]],
+        pbc=True,
+    )
+    g_pbc = build_graph(atoms_pbc, cutoff=1.0)
+
+    # Sanity: at least one edge has nonzero shift
+    assert g_pbc.shift_idx.abs().sum().item() > 0
+
+    # Non-PBC equivalent: place atom 1 at the unwrapped position (-0.4, 0, 0)
+    # so the edge_vec matches without needing shift_idx.
+    atoms_nonpbc = ase.Atoms(
+        numbers=[1, 1],
+        positions=[[0.0, 0.0, 0.0], [-0.4, 0.0, 0.0]],
+    )
+    g_nonpbc = build_graph(atoms_nonpbc, cutoff=1.0)
+    assert g_nonpbc.shift_idx is None
+
+    torch.manual_seed(0)
+    layer = InvariantInteraction(hidden_dim=8, num_basis=16, cutoff=1.0)
+    s_in = torch.randn(2, 8)
+    s_out_pbc = layer(s_in, g_pbc)
+    s_out_nonpbc = layer(s_in, g_nonpbc)
+
+    # Both paths should produce the same output: PBC with shift should match
+    # the non-PBC case where positions are pre-unwrapped.
+    assert torch.allclose(s_out_pbc, s_out_nonpbc, atol=1e-5)
