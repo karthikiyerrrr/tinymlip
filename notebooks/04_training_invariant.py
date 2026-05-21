@@ -43,6 +43,12 @@ def _(mo):
     - Run a small training loop end-to-end on rMD17 in under five minutes on CPU.
     - Read learning curves and parity plots without confusion.
     - Explain what the per-element reference shift is doing and why.
+
+    **A note on the sliders.** Model architecture (`hidden_dim`, `n_layers`,
+    `num_basis`) is fixed in this notebook so the sliders only control the
+    training story — learning rate, epochs, batch size, and the force-loss
+    weight `w_F`. Going bigger or deeper is a one-line change in the `tiny`
+    dict below, but costs more time on CPU.
     """)
     return
 
