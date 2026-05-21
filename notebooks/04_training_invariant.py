@@ -191,7 +191,16 @@ def _(load_rmd17, mo, tiny):
     mo.md(
         f"**train:** {len(train_structures)} frames &nbsp;·&nbsp; "
         f"**val:** {len(val_structures)} frames &nbsp;·&nbsp; "
-        f"**test:** {len(test_bundle.structures)} frames"
+        f"**test:** {len(test_bundle.structures)} frames\n\n"
+        "**On the split discipline.** rMD17 is an MD trajectory — consecutive "
+        "frames are autocorrelated on the picosecond timescale of bond "
+        "vibrations, so naive uniform random subsampling would bleed training "
+        "frames into the test set. The official 5-fold CV indices are "
+        "designed to be temporally separated for exactly this reason. We "
+        "carve validation out of the *training* split so the official test "
+        "split stays untouched until the parity plots at the end. (The "
+        "analog in notebook 06’s crystal data is: don’t put the same "
+        "crystal at different volumes in train and test.)"
     )
     return test_bundle, train_meta, train_structures, val_meta, val_structures
 
