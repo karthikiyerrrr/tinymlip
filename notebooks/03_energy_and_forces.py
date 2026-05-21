@@ -152,7 +152,7 @@ def _(cutoff, graph, mo, n_layers, torch):
 
     torch.manual_seed(0)
     model = InvariantMPNN(
-        hidden_dim=32,                # features per atom; what "F" means in shape comments. h=32 is on the small end — literature MLIPs use 64-256.
+        hidden_dim=32,  # features per atom; what "F" means in shape comments. h=32 is on the small end — literature MLIPs use 64-256.
         num_basis=8,
         cutoff=cutoff.value,
         n_layers=n_layers.value,
@@ -162,23 +162,20 @@ def _(cutoff, graph, mo, n_layers, torch):
     # (model(graph) computes the same energy in one call — we unroll it here to teach.)
 
     # 1) Embed: each atomic number becomes a learnable feature vector.
-    atom_embeddings = model.embed(graph.z)              # [n_atoms, hidden_dim]
+    atom_embeddings = model.embed(graph.z)  # [n_atoms, hidden_dim]
 
     # 2) Message passing: each layer mixes features from neighbors.
     atom_features = atom_embeddings
     for layer in model.interactions:
-        atom_features = layer(atom_features, graph)     # [n_atoms, hidden_dim]
+        atom_features = layer(atom_features, graph)  # [n_atoms, hidden_dim]
 
     # 3) Readout: a per-atom MLP turns each feature vector into a scalar.
-    per_atom_energies = model.readout(atom_features).squeeze(-1)   # [n_atoms]
+    per_atom_energies = model.readout(atom_features).squeeze(-1)  # [n_atoms]
 
     # 4) Sum: the molecular energy is the sum of per-atom contributions.
-    energy = per_atom_energies.sum()                    # []  scalar molecular energy
+    energy = per_atom_energies.sum()  # []  scalar molecular energy
 
-    labels = [
-        f"{chemical_symbols[int(graph.z[i])]}[{i}]"
-        for i in range(graph.n_atoms)
-    ]
+    labels = [f"{chemical_symbols[int(graph.z[i])]}[{i}]" for i in range(graph.n_atoms)]
     e_total = energy.item()
 
     mo.md(
@@ -316,16 +313,16 @@ def _(atoms, build_graph, cutoff, graph, mo, model, torch):
 
     # Build two copies of ethanol, 20 Å apart along x. At cutoff = 5 Å, no edges
     # connect the copies — they're independent.
-    positions_single = atoms.get_positions()                    # [n_atoms, 3]
-    dimer_offset = np.array([20.0, 0.0, 0.0])                   # [3]
+    positions_single = atoms.get_positions()  # [n_atoms, 3]
+    dimer_offset = np.array([20.0, 0.0, 0.0])  # [3]
     positions_dimer = np.concatenate(
         [positions_single, positions_single + dimer_offset],
         axis=0,
-    )                                                           # [2*n_atoms, 3]
+    )  # [2*n_atoms, 3]
     numbers_dimer = np.concatenate(
         [atoms.numbers, atoms.numbers],
         axis=0,
-    )                                                           # [2*n_atoms]
+    )  # [2*n_atoms]
     atoms_dimer = ase.Atoms(numbers=numbers_dimer, positions=positions_dimer)
     graph_dimer = build_graph(atoms_dimer, cutoff=cutoff.value)
 
@@ -407,7 +404,10 @@ def _(mo):
 @app.cell(hide_code=True)
 def _(mo):
     arrow_scale = mo.ui.slider(
-        start=1.0, stop=50.0, step=1.0, value=20.0,
+        start=1.0,
+        stop=50.0,
+        step=1.0,
+        value=20.0,
         label="arrow length scale",
     )
     arrow_scale
@@ -425,8 +425,8 @@ def _(atoms, build_graph, cutoff, mo, model):
     graph_with_grad = build_graph(atoms, cutoff=cutoff.value)
     graph_with_grad.pos.requires_grad_(True)
 
-    predicted_energy = model(graph_with_grad)                          # scalar
-    forces = compute_forces(predicted_energy, graph_with_grad.pos)     # [n_atoms, 3]
+    predicted_energy = model(graph_with_grad)  # scalar
+    forces = compute_forces(predicted_energy, graph_with_grad.pos)  # [n_atoms, 3]
 
     mo.md(
         f"`forces.shape` = `{tuple(forces.shape)}` &nbsp;·&nbsp; "
@@ -449,9 +449,9 @@ def _(
 ):
     from tinymlip.viz import element_color, element_radius
 
-    positions_np = graph_with_grad.pos.detach().numpy()                # [n_atoms, 3]
-    forces_np = forces.detach().numpy()                                # [n_atoms, 3]
-    atomic_numbers_np = graph_with_grad.z.numpy()                      # [n_atoms]
+    positions_np = graph_with_grad.pos.detach().numpy()  # [n_atoms, 3]
+    forces_np = forces.detach().numpy()  # [n_atoms, 3]
+    atomic_numbers_np = graph_with_grad.z.numpy()  # [n_atoms]
 
     # Bonds: a separate, tighter-cutoff graph just for visualization. The physics
     # graph above uses `cutoff` (default 5 Å), which on ethanol is fully connected
@@ -469,7 +469,7 @@ def _(
 
     arrow_length_scale = float(arrow_scale.value)
     arrow_tail = positions_np
-    arrow_tip = positions_np + arrow_length_scale * forces_np          # [n_atoms, 3]
+    arrow_tip = positions_np + arrow_length_scale * forces_np  # [n_atoms, 3]
 
     shaft_x, shaft_y, shaft_z = [], [], []
     for k in range(graph_with_grad.n_atoms):
@@ -477,7 +477,7 @@ def _(
         shaft_y.extend([arrow_tail[k, 1], arrow_tip[k, 1], None])
         shaft_z.extend([arrow_tail[k, 2], arrow_tip[k, 2], None])
 
-    force_magnitudes = forces.detach().norm(dim=-1).numpy()            # [n_atoms]
+    force_magnitudes = forces.detach().norm(dim=-1).numpy()  # [n_atoms]
     head_u = forces_np[:, 0] * arrow_length_scale
     head_v = forces_np[:, 1] * arrow_length_scale
     head_w = forces_np[:, 2] * arrow_length_scale
@@ -485,7 +485,9 @@ def _(
     fig_forces = go.Figure()
     fig_forces.add_trace(
         go.Scatter3d(
-            x=bond_x, y=bond_y, z=bond_z,
+            x=bond_x,
+            y=bond_y,
+            z=bond_z,
             mode="lines",
             line=dict(color="#bbbbbb", width=3),
             hoverinfo="skip",
@@ -495,7 +497,9 @@ def _(
     )
     fig_forces.add_trace(
         go.Scatter3d(
-            x=shaft_x, y=shaft_y, z=shaft_z,
+            x=shaft_x,
+            y=shaft_y,
+            z=shaft_z,
             mode="lines",
             line=dict(color="crimson", width=4),
             hoverinfo="skip",
@@ -505,8 +509,12 @@ def _(
     )
     fig_forces.add_trace(
         go.Cone(
-            x=arrow_tip[:, 0], y=arrow_tip[:, 1], z=arrow_tip[:, 2],
-            u=head_u, v=head_v, w=head_w,
+            x=arrow_tip[:, 0],
+            y=arrow_tip[:, 1],
+            z=arrow_tip[:, 2],
+            u=head_u,
+            v=head_v,
+            w=head_w,
             anchor="tail",
             sizemode="absolute",
             sizeref=0.08,
@@ -518,17 +526,16 @@ def _(
     )
     fig_forces.add_trace(
         go.Scatter3d(
-            x=positions_np[:, 0], y=positions_np[:, 1], z=positions_np[:, 2],
+            x=positions_np[:, 0],
+            y=positions_np[:, 1],
+            z=positions_np[:, 2],
             mode="markers+text",
             marker=dict(
                 size=[element_radius(int(zk)) * 14 for zk in atomic_numbers_np],
                 color=[element_color(int(zk)) for zk in atomic_numbers_np],
                 line=dict(color="#222", width=1),
             ),
-            text=[
-                f"{chemical_symbols[int(zk)]}[{k}]"
-                for k, zk in enumerate(atomic_numbers_np)
-            ],
+            text=[f"{chemical_symbols[int(zk)]}[{k}]" for k, zk in enumerate(atomic_numbers_np)],
             textposition="top center",
             textfont=dict(size=10, color="#111"),
             hovertemplate=[
@@ -580,13 +587,13 @@ def _(
     #       inter-atomic distances (and the cutoff envelope) — neither is
     #       trained, both are baked into the architecture.
 
-    shift_vector = np.array([1.2, -0.7, 2.4])                       # [3]
+    shift_vector = np.array([1.2, -0.7, 2.4])  # [3]
     atoms_shifted = atoms.copy()
     atoms_shifted.set_positions(atoms_shifted.get_positions() + shift_vector)
 
     graph_shifted = build_graph(atoms_shifted, cutoff=cutoff.value)
     graph_shifted.pos.requires_grad_(True)
-    energy_shifted = model(graph_shifted)                           # scalar
+    energy_shifted = model(graph_shifted)  # scalar
     forces_shifted = compute_forces(energy_shifted, graph_shifted.pos)  # [n_atoms, 3]
 
     energy_diff = (energy_shifted - predicted_energy).abs().item()
@@ -626,8 +633,8 @@ def _(
     # both by sampling a random proper rotation R and comparing.
     torch.manual_seed(1)
     random_3x3 = torch.randn(3, 3)
-    R_rot, _ = torch.linalg.qr(random_3x3)                      # orthogonal 3x3
-    if torch.det(R_rot) < 0:                                    # ensure det = +1 (proper rotation, not a reflection)
+    R_rot, _ = torch.linalg.qr(random_3x3)  # noqa: N806 — R denotes a rotation matrix (math convention)
+    if torch.det(R_rot) < 0:  # ensure det = +1 (proper rotation, not a reflection)
         R_rot[:, 0] = -R_rot[:, 0]
 
     # Apply R to every atom's position. ASE stores positions as row vectors,
@@ -637,11 +644,11 @@ def _(
 
     graph_rotated = build_graph(atoms_rotated, cutoff=cutoff.value)
     graph_rotated.pos.requires_grad_(True)
-    energy_rotated = model(graph_rotated)                        # scalar
-    forces_rotated = compute_forces(energy_rotated, graph_rotated.pos)   # [n_atoms, 3]
+    energy_rotated = model(graph_rotated)  # scalar
+    forces_rotated = compute_forces(energy_rotated, graph_rotated.pos)  # [n_atoms, 3]
 
     # Expected force after rotation: F_rotated[i] = R @ F[i], i.e. forces @ R.T.
-    forces_expected = forces.detach() @ R_rot.T                  # [n_atoms, 3]
+    forces_expected = forces.detach() @ R_rot.T  # [n_atoms, 3]
 
     energy_rot_diff = (energy_rotated - predicted_energy).abs().item()
     forces_rot_resid = (forces_rotated.detach() - forces_expected).norm(dim=-1).max().item()
@@ -757,8 +764,8 @@ def _(
     # 1) Autograd force at (atom_index, axis_index).
     graph_fp64 = build_graph(atoms, cutoff=cutoff.value, dtype=torch.float64)
     graph_fp64.pos.requires_grad_(True)
-    energy_fp64 = model_fp64(graph_fp64)                            # scalar
-    forces_fp64 = compute_forces(energy_fp64, graph_fp64.pos)       # [n_atoms, 3]
+    energy_fp64 = model_fp64(graph_fp64)  # scalar
+    forces_fp64 = compute_forces(energy_fp64, graph_fp64.pos)  # [n_atoms, 3]
     autograd_force = forces_fp64[atom_index, axis_index].item()
 
     # 2) Central differences. Rebuild the graph each time so connectivity is
@@ -771,7 +778,9 @@ def _(
         perturbed_positions[atom_index, axis_index] += delta
         atoms_perturbed.set_positions(perturbed_positions)
         graph_perturbed = build_graph(
-            atoms_perturbed, cutoff=cutoff.value, dtype=torch.float64,
+            atoms_perturbed,
+            cutoff=cutoff.value,
+            dtype=torch.float64,
         )
         with torch.no_grad():
             return model_fp64(graph_perturbed).item()
