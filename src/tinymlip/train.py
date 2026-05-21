@@ -31,7 +31,7 @@ import polars as pl
 import torch
 from torch import Tensor
 
-from tinymlip.forces import compute_forces
+from tinymlip.forces import compute_forces, compute_forces_and_stress
 
 
 def fit_atomic_reference(
@@ -173,22 +173,35 @@ def _step(
     shifts: dict[int, float],
     w_e: float,
     w_f: float,
+    w_s: float = 0.0,
 ) -> tuple[Tensor, dict[str, float]]:
-    """Single forward pass: energy + autograd forces + weighted loss.
+    """Single forward pass: energy + autograd forces (+ stress when requested) + weighted loss.
 
     Used by both train_one_epoch (with backward) and evaluate (without).
-    pos.requires_grad_ is set BEFORE the forward so compute_forces works.
 
-    We call .sum() on the per-frame energies before passing to compute_forces
-    because compute_forces wants a scalar; per-frame forces are recovered
-    correctly because the disjoint-union batching guarantees no cross-frame
-    edges, so each atom's force only depends on its own frame's energy.
+    When w_s > 0 and the batch contains a "stress" key, routes through
+    compute_forces_and_stress so that the virial / cell gradient is computed
+    via autograd over the strain variable. Otherwise falls back to the original
+    pos.requires_grad_ path used by nb04/nb05 — bit-identical behaviour when
+    w_s == 0.
+
+    We call .sum() on the per-frame energies in the non-stress path before
+    passing to compute_forces because compute_forces wants a scalar; per-frame
+    forces are recovered correctly because the disjoint-union batching
+    guarantees no cross-frame edges, so each atom's force only depends on its
+    own frame's energy.
     """
     graph = batch["graph"]
-    graph.pos.requires_grad_(True)
 
-    pred_energy_residual = model(graph)  # [B] (model only learns residuals)
-    pred_forces = compute_forces(pred_energy_residual.sum(), graph.pos)  # [N_total, 3]
+    if w_s > 0 and "stress" in batch:
+        # PBC + stress path: strain perturbation handled inside compute_forces_and_stress
+        pred_e_residual, pred_f, pred_s = compute_forces_and_stress(model, graph, create_graph=True)
+    else:
+        # Original non-stress path: pos must be a leaf
+        graph.pos.requires_grad_(True)
+        pred_e_residual = model(graph)  # [B] (model only learns residuals)
+        pred_f = compute_forces(pred_e_residual.sum(), graph.pos)  # [N_total, 3]
+        pred_s = None
 
     # Subtract the atomic reference from the true energy so model targets are
     # the small residuals matching the model's output.
@@ -196,13 +209,16 @@ def _step(
     true_residual = batch["energy"] - ref
 
     loss, metrics = energy_force_loss(
-        pred_energy_residual,
+        pred_e_residual,
         true_residual,
-        pred_forces,
+        pred_f,
         batch["forces"],
         batch["n_atoms"],
         w_e=w_e,
         w_f=w_f,
+        w_s=w_s,
+        pred_stress=pred_s,
+        true_stress=batch.get("stress") if w_s > 0 else None,
     )
     return loss, metrics
 
@@ -215,14 +231,17 @@ def train_one_epoch(
     shifts: dict[int, float],
     w_e: float = 1.0,
     w_f: float = 100.0,
+    w_s: float = 0.0,
 ) -> dict[str, float]:
     """One pass over `loader` with parameter updates. Returns mean metrics."""
     model.train()
     sums = {"loss": 0.0, "energy_mae": 0.0, "force_mae": 0.0}
+    if w_s > 0:
+        sums["stress_mae"] = 0.0
     n_batches = 0
     for batch in loader:
         optimizer.zero_grad()
-        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f)
+        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f, w_s=w_s)
         loss.backward()
         optimizer.step()
         for k in sums:
@@ -238,6 +257,7 @@ def evaluate(
     shifts: dict[int, float],
     w_e: float = 1.0,
     w_f: float = 100.0,
+    w_s: float = 0.0,
 ) -> dict[str, float]:
     """One pass over `loader` without parameter updates. Returns mean metrics.
 
@@ -248,9 +268,11 @@ def evaluate(
     """
     model.eval()
     sums = {"loss": 0.0, "energy_mae": 0.0, "force_mae": 0.0}
+    if w_s > 0:
+        sums["stress_mae"] = 0.0
     n_batches = 0
     for batch in loader:
-        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f)
+        loss, metrics = _step(model, batch, shifts=shifts, w_e=w_e, w_f=w_f, w_s=w_s)
         for k in sums:
             sums[k] += metrics[k]
         n_batches += 1
@@ -266,12 +288,14 @@ def train(
     lr: float,
     w_e: float = 1.0,
     w_f: float = 100.0,
+    w_s: float = 0.0,
     shifts: dict[int, float],
 ) -> pl.DataFrame:
     """Train `model` for `n_epochs` and return a polars run-log DataFrame.
 
     Columns: epoch (int), split (str: "train"/"val"), loss, energy_mae, force_mae.
-    Two rows per epoch (one per split). Caller plots straight from this frame.
+    Two rows per epoch (one per split). When w_s>0 a stress_mae column is also
+    present. Caller plots straight from this frame.
 
     Optimizer is Adam(lr). LR scheduling, EMA, gradient clipping are deliberately
     omitted for clarity — production tricks belong in a follow-up.
@@ -280,9 +304,9 @@ def train(
     rows: list[dict[str, float | int | str]] = []
     for epoch in range(n_epochs):
         train_metrics = train_one_epoch(
-            model, train_loader, optimizer, shifts=shifts, w_e=w_e, w_f=w_f
+            model, train_loader, optimizer, shifts=shifts, w_e=w_e, w_f=w_f, w_s=w_s
         )
-        val_metrics = evaluate(model, val_loader, shifts=shifts, w_e=w_e, w_f=w_f)
+        val_metrics = evaluate(model, val_loader, shifts=shifts, w_e=w_e, w_f=w_f, w_s=w_s)
         rows.append({"epoch": epoch, "split": "train", **train_metrics})
         rows.append({"epoch": epoch, "split": "val", **val_metrics})
     return pl.DataFrame(rows)

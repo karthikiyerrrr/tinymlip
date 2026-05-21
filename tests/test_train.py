@@ -247,3 +247,42 @@ def test_energy_force_loss_with_w_s_nonzero_includes_stress_term():
     assert float(loss) == pytest.approx(2.0, abs=1e-6)
     assert "stress_mae" in m
     assert m["stress_mae"] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_step_uses_compute_forces_and_stress_when_batch_has_stress():
+    """When the batch dict contains a 'stress' key, _step must route through
+    compute_forces_and_stress and the returned metrics dict must include
+    stress_mae."""
+    import torch
+    from ase import Atoms
+
+    from tinymlip.graph import build_graph, collate_graphs
+    from tinymlip.models import EquivariantMPNN
+    from tinymlip.train import _step
+
+    a = 3.6
+    atoms = Atoms(
+        numbers=[29] * 4,
+        positions=[
+            [0.0, 0.0, 0.0],
+            [0.0, a / 2, a / 2],
+            [a / 2, 0.0, a / 2],
+            [a / 2, a / 2, 0.0],
+        ],
+        cell=[[a, 0, 0], [0, a, 0], [0, 0, a]],
+        pbc=True,
+    )
+    g = collate_graphs([build_graph(atoms, cutoff=4.0)])
+    torch.manual_seed(0)
+    model = EquivariantMPNN(n_layers=1, hidden_dim=8, num_basis=8, cutoff=4.0)
+
+    batch = {
+        "graph": g,
+        "energy": torch.zeros(1),
+        "forces": torch.zeros(4, 3),
+        "stress": torch.zeros(1, 3, 3),
+        "n_atoms": torch.tensor([4]),
+    }
+    loss, metrics = _step(model, batch, shifts={29: 0.0}, w_e=1.0, w_f=100.0, w_s=1.0)
+    assert "stress_mae" in metrics
+    assert torch.isfinite(loss)
