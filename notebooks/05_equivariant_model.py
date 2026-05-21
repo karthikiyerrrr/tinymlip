@@ -87,16 +87,25 @@ def _(mo):
     Take a small molecule (H₂O) and an untrained `InvariantMPNN`. As we
     rotate the molecule rigidly, the **forces** rotate with it (they're a
     vector quantity derived from $-\partial E / \partial \mathbf{r}$, and
-    $\mathbf{r}$ is the autograd leaf). But the model's internal **hidden
-    scalar features** don't change at all — they're invariant by
-    construction.
+    $\mathbf{r}$ is the autograd leaf). The model's internal **hidden
+    scalar features** stay constant — rotation-invariant by construction.
 
-    Drag the slider below. Watch the arrows rotate; watch the scalar bars
-    stay flat. The arrows are the physics; the bars are everything our model
-    "knows" about an atom internally. Notice the mismatch.
+    That isn't a defect — nb03 already established this is exactly what
+    the invariant model is supposed to do, and that the model is fully
+    rotation-symmetric in both energy and forces. The visual below makes
+    a *different* point: hidden scalars **discard direction by
+    construction**. Every edge collapses $(\mathbf{r}_j - \mathbf{r}_i)$
+    into the scalar distance $r_{ij}$ before anything reaches the hidden
+    state. A scalar hidden feature has to *reconstruct* directional
+    concepts ("my neighbours pull me upward more than forward")
+    implicitly from distance-only filters over multiple layers.
 
-    **The fix:** add a vector channel `v` per atom that rotates *with* the
-    molecule, so internal features can carry direction too.
+    Drag the sliders. The arrows rotate with the molecule (correct
+    physics). The bars stay flat (correct — and also: those bars have
+    no notion of "up" vs "forward" *internally*). nb05's job is to
+    relax that constraint: add a vector channel `v` that **carries
+    direction natively**, so internal features can represent geometry
+    directly.
     """)
     return
 
@@ -172,10 +181,18 @@ def _(
     _e = hook_model(_graph)
     _forces = compute_forces(_e, _graph.pos).detach().numpy()
 
-    # Hidden scalars at atom 0: post-embedding features before any
-    # interaction (already invariant — that's the visual point).
+    # Hidden scalars at atom 0 — POST-INTERACTION features. The raw embedding
+    # is just a lookup by atomic number, so it's trivially rotation-invariant
+    # (and translation-invariant, and distortion-invariant — it has no
+    # geometric dependence at all). Running through the interaction blocks
+    # first gives scalars that genuinely depend on geometry (bond distances,
+    # neighbour counts) while *still* being rotation-invariant by construction.
+    # That's the actual lesson.
     with torch.no_grad():
-        _x0 = hook_model.embed(_graph.z)[0].numpy()  # [F]
+        _s_post = hook_model.embed(_graph.z)  # [N, F]
+        for _interaction in hook_model.interactions:
+            _s_post = _interaction(_s_post, _graph)
+        _x0 = _s_post[0].numpy()  # [F]
 
     _pos_np = _graph.pos.detach().numpy()
     _z_np = _graph.z.numpy()
@@ -281,13 +298,14 @@ def _(
     # auto-ranging would re-center the bars even when their values are constant.
     _right = go.Figure(go.Bar(x=[f"ch{i}" for i in range(8)], y=_x0[:8]))
     _right.update_layout(
-        title="Hidden scalars at atom 0 (unchanged by rotation)",
+        title="Hidden scalars at atom 0 (geometry-sensitive, rotation-invariant)",
         yaxis=dict(range=[-1.5, 1.5]),
         height=300,
         margin=dict(l=40, r=10, t=40, b=40),
     )
 
     mo.vstack([_left, _right])
+
     return
 
 
