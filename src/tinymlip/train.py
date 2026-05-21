@@ -116,30 +116,31 @@ def energy_force_loss(
     *,
     w_e: float = 1.0,
     w_f: float = 100.0,
+    w_s: float = 0.0,
+    pred_stress: Tensor | None = None,
+    true_stress: Tensor | None = None,
 ) -> tuple[Tensor, dict[str, float]]:
-    """Weighted per-atom energy MSE + force MSE, with MAEs returned for logging.
+    """Weighted per-atom energy MSE + force MSE + (optional) stress MSE.
 
-    L = w_e * MSE(E_pred / N, E_true / N) + w_f * MSE(F_pred, F_true)
+    L = w_e * MSE(E_pred/N, E_true/N) + w_f * MSE(F_pred, F_true) + w_s * MSE(σ_pred, σ_true)
 
-    Per-atom normalization on energy makes the loss scale-free across system
-    sizes — important once nb 06 mixes 9-atom ethanols with larger crystals.
-    The default w_f=100 balances per-component magnitudes: post-shift energies
-    are ~1 kcal/mol while force components are ~50 kcal/mol/Å.
+    Per-atom normalization on energy keeps the loss scale-free across system
+    sizes. Stress is already intensive (eV/Å³ when ASE units are used) so no
+    normalization is applied. When w_s=0 the stress branch is a no-op and the
+    function is bit-identical to the pre-PBC API; nb04 and nb05 callers are
+    unaffected.
 
     Args:
-        pred_e: [B] predicted energies (already shifted — i.e. residuals).
-        true_e: [B] target energies (already shifted by `apply_atomic_reference`).
-        pred_f: [N_total, 3] predicted forces (concatenated across the batch).
-        true_f: [N_total, 3] target forces (same layout).
-        n_atoms: [B] long, per-frame atom count for per-atom normalization.
-        w_e, w_f: scalar weights on the energy and force terms.
+        pred_e, true_e:     [B] energies (already shifted by atomic ref).
+        pred_f, true_f:     [N_total, 3] forces (concatenated across batch).
+        n_atoms:            [B] long, per-frame atom count.
+        w_e, w_f, w_s:      scalar weights on each loss term.
+        pred_stress, true_stress: optional [B, 3, 3] stress tensors. Required
+                                  when w_s>0; ignored when w_s=0.
 
     Returns:
-        (loss, metrics_dict) where metrics_dict has the keys:
-            loss         — the scalar loss as a float (a `.item()` copy).
-            energy_mae   — mean absolute error on PER-ATOM energy (same units as
-                           pred_e / n_atoms — kcal/mol/atom for rMD17).
-            force_mae    — mean absolute error on force components.
+        (loss, metrics). metrics has keys: loss, energy_mae, force_mae.
+        When w_s>0 (i.e. stresses were provided), stress_mae is added.
     """
     per_atom_pred = pred_e / n_atoms.to(pred_e.dtype)
     per_atom_true = true_e / n_atoms.to(true_e.dtype)
@@ -148,12 +149,20 @@ def energy_force_loss(
     force_mse = ((pred_f - true_f) ** 2).mean()
 
     loss = w_e * energy_mse + w_f * force_mse
-
     metrics = {
-        "loss": float(loss.detach()),
+        "loss": 0.0,  # filled in after stress branch
         "energy_mae": float((per_atom_pred - per_atom_true).abs().mean().detach()),
         "force_mae": float((pred_f - true_f).abs().mean().detach()),
     }
+
+    if w_s > 0:
+        if pred_stress is None or true_stress is None:
+            raise ValueError("w_s>0 requires pred_stress and true_stress")
+        stress_mse = ((pred_stress - true_stress) ** 2).mean()
+        loss = loss + w_s * stress_mse
+        metrics["stress_mae"] = float((pred_stress - true_stress).abs().mean().detach())
+
+    metrics["loss"] = float(loss.detach())
     return loss, metrics
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import torch
 from ase import Atoms
 
@@ -185,3 +186,64 @@ def test_train_runs_two_epochs_returns_polars_history(ethanol_atoms):
     assert splits == {"train", "val"}
     # All losses finite.
     assert all(np.isfinite(v) for v in history["loss"].to_list())
+
+
+def test_energy_force_loss_with_w_s_zero_matches_old_behavior():
+    """When w_s=0 the new stress-aware loss must equal the original output."""
+    from tinymlip.train import energy_force_loss
+
+    pred_e = torch.tensor([1.2, 0.8])
+    true_e = torch.tensor([1.0, 1.0])
+    pred_f = torch.tensor([[0.1, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    true_f = torch.tensor([[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]])
+    n_atoms = torch.tensor([1, 1])
+
+    loss_baseline, m_baseline = energy_force_loss(
+        pred_e, true_e, pred_f, true_f, n_atoms, w_e=1.0, w_f=100.0
+    )
+    pred_s = torch.zeros(2, 3, 3)
+    true_s = torch.zeros(2, 3, 3)
+    loss_new, m_new = energy_force_loss(
+        pred_e,
+        true_e,
+        pred_f,
+        true_f,
+        n_atoms,
+        w_e=1.0,
+        w_f=100.0,
+        w_s=0.0,
+        pred_stress=pred_s,
+        true_stress=true_s,
+    )
+    torch.testing.assert_close(loss_baseline, loss_new)
+    assert m_new["energy_mae"] == m_baseline["energy_mae"]
+
+
+def test_energy_force_loss_with_w_s_nonzero_includes_stress_term():
+    """With w_s>0, a nonzero stress error increases the loss."""
+    from tinymlip.train import energy_force_loss
+
+    pred_e = torch.tensor([0.0])
+    true_e = torch.tensor([0.0])
+    pred_f = torch.zeros(2, 3)
+    true_f = torch.zeros(2, 3)
+    n_atoms = torch.tensor([2])
+
+    pred_s = torch.zeros(1, 3, 3)
+    true_s = torch.ones(1, 3, 3)  # MSE = 1
+
+    loss, m = energy_force_loss(
+        pred_e,
+        true_e,
+        pred_f,
+        true_f,
+        n_atoms,
+        w_e=1.0,
+        w_f=100.0,
+        w_s=2.0,
+        pred_stress=pred_s,
+        true_stress=true_s,
+    )
+    assert float(loss) == pytest.approx(2.0, abs=1e-6)
+    assert "stress_mae" in m
+    assert m["stress_mae"] == pytest.approx(1.0, abs=1e-6)
