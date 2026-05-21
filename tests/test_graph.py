@@ -221,7 +221,8 @@ def test_graph_relabels_under_permutation():
     assert expected == e2
 
 
-def test_build_graph_rejects_periodic_systems_with_clear_message():
+def test_build_graph_pbc_returns_cell_and_shift_idx():
+    """Periodic systems now return cell and shift_idx (not NotImplementedError)."""
     atoms = Atoms(
         numbers=[6, 6],
         positions=[[0.0, 0.0, 0.0], [1.5, 0.0, 0.0]],
@@ -229,8 +230,15 @@ def test_build_graph_rejects_periodic_systems_with_clear_message():
         pbc=[True, True, True],
     )
 
-    with pytest.raises(NotImplementedError, match="notebook 06"):
-        build_graph(atoms, cutoff=5.0)
+    g = build_graph(atoms, cutoff=5.0)
+
+    # PBC path must populate cell and shift_idx
+    assert g.cell is not None
+    assert g.cell.shape == (3, 3)
+    assert g.shift_idx is not None
+    assert g.shift_idx.shape[0] == g.n_edges
+    assert g.shift_idx.shape[1] == 3
+    assert g.pbc == (True, True, True)
 
 
 def test_element_color_falls_back_for_unknown_z():
@@ -317,3 +325,35 @@ def test_atomgraph_batch_field_defaults_none(ethanol_atoms):
 
     graph = build_graph(ethanol_atoms, cutoff=5.0)
     assert graph.batch is None
+
+
+def test_build_graph_pbc_simple_cubic_two_atoms():
+    """Two atoms in a cubic cell — image enumeration is hand-checkable.
+
+    Cell: 4 Å cube. Atoms at (0,0,0) and (2,0,0). Cutoff 2.5 Å.
+
+    Within the central cell: 0<->1 at distance 2.0 (1 image-pair, both directions).
+    Plus the periodic image of atom 1 at (-2, 0, 0) is 2.0 from atom 0 (shift S=(-1,0,0)),
+    and the image of atom 0 at (4, 0, 0) is 2.0 from atom 1 (shift S=(+1,0,0)).
+    No other shifts are within cutoff (next-nearest is 4 Å along y or z).
+
+    Total edges: 4 (two same-cell + two image-pair, both directions).
+    """
+    atoms = Atoms(
+        numbers=[1, 1],
+        positions=[[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]],
+        cell=[[4.0, 0, 0], [0, 4.0, 0], [0, 0, 4.0]],
+        pbc=True,
+    )
+    g = build_graph(atoms, cutoff=2.5)
+
+    assert g.n_atoms == 2
+    assert g.shift_idx is not None
+    # Exactly 4 edges, each at distance 2.0
+    assert g.n_edges == 4
+    torch.testing.assert_close(g.edge_dist, torch.full((4,), 2.0), atol=1e-5, rtol=0)
+    # Each edge has |shift|_inf in {0, 1}
+    assert g.shift_idx.abs().max().item() == 1
+    # cell and pbc round-tripped onto the graph
+    assert g.cell is not None and g.cell.shape == (3, 3)
+    assert g.pbc == (True, True, True)

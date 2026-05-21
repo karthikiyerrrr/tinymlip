@@ -6,8 +6,10 @@ convention: edges are directed both ways (every pair contributes (i,j) and
 (j,i)), self-loops are excluded, and `edge_vec = pos[dst] - pos[src]`.
 
 For non-periodic systems we use a hand-written O(N^2) cdist scan — it's
-five conceptual lines and rMD17 molecules have <= 21 atoms. The PBC path
-is signaled in the signature but not implemented; it lands in notebook 06.
+five conceptual lines and rMD17 molecules have <= 21 atoms. For PBC, we
+delegate to ASE's primitive_neighbor_list which handles arbitrary cell shapes
+(orthorhombic, triclinic, high aspect ratio) and reports integer lattice
+shifts per edge.
 """
 
 from __future__ import annotations
@@ -15,7 +17,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import ase
+import numpy as np
 import torch
+from ase.neighborlist import primitive_neighbor_list
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,53 @@ def _neighbor_list_torch(
     return edge_index, edge_vec, edge_dist
 
 
+def _neighbor_list_ase(
+    atoms: ase.Atoms,
+    cutoff: float,
+    dtype: torch.dtype,
+    device: torch.device | str,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Periodic neighbor list via ASE.
+
+    Delegates to `ase.neighborlist.primitive_neighbor_list`, the same backend
+    SchNetPack uses. Returns directed edges (both (i, j) and (j, i)), excludes
+    self-loops, and reports lattice shifts so the model can recompute
+    `edge_vec = pos[j] - pos[i] + S @ cell` inside its forward pass — this is
+    what lets autograd flow through both positions and cell (the latter is
+    needed for stress via the strain trick).
+
+    Args:
+        atoms:  ASE Atoms with `pbc` and `cell` set.
+        cutoff: radial cutoff in Å.
+        dtype:  floating dtype for positions and edge_vec.
+        device: torch device for returned tensors.
+
+    Returns:
+        edge_index: [2, E] long — (src, dst), directed both ways, no self-loops.
+        edge_vec:   [E, 3] float — pos[dst] - pos[src] (already unwrapped through PBC).
+        edge_dist:  [E] float — Euclidean distance for each edge.
+        shift_idx:  [E, 3] long — integer lattice shifts S, one row per edge.
+    """
+    # quantities "ijDdS": i,j atom indices, D unwrapped vector, d distance, S shift (integers).
+    # self_interaction=False excludes (i, i, S=0). image-of-self at S != 0 is included
+    # when within cutoff (correct: an atom DOES interact with its own periodic image).
+    i, j, D, d, S = primitive_neighbor_list(  # noqa: N806
+        "ijDdS",
+        pbc=atoms.pbc,
+        cell=atoms.cell.array,
+        positions=atoms.positions,
+        cutoff=cutoff,
+        self_interaction=False,
+    )
+    edge_index = torch.as_tensor(
+        np.stack([i, j], axis=0), dtype=torch.long, device=device
+    )  # [2, E]
+    edge_vec = torch.as_tensor(D, dtype=dtype, device=device)  # [E, 3]
+    edge_dist = torch.as_tensor(d, dtype=dtype, device=device)  # [E]
+    shift_idx = torch.as_tensor(S, dtype=torch.long, device=device)  # [E, 3]
+    return edge_index, edge_vec, edge_dist, shift_idx
+
+
 def build_graph(
     atoms: ase.Atoms,
     *,
@@ -116,22 +167,42 @@ def build_graph(
     `_neighbor_list_torch`). rMD17 molecules have <= 21 atoms; the cost is
     dominated by Python overhead and we prefer the readable implementation.
 
-    For periodic systems (any of `atoms.pbc` is True), raises
-    NotImplementedError. PBC support arrives with notebook 06.
+    Periodic systems delegate to `ase.neighborlist.primitive_neighbor_list`
+    via `_neighbor_list_ase` — the same backend SchNetPack uses. The returned
+    graph carries `shift_idx` so the model can recompute periodic edge_vecs
+    inside its forward pass and propagate autograd through the cell (needed
+    for stress).
 
     Args:
-        atoms:  ASE Atoms; `atoms.numbers` and `atoms.positions` are read.
+        atoms:  ASE Atoms; `atoms.numbers`, `atoms.positions`, and (for PBC)
+                `atoms.cell` and `atoms.pbc` are read.
         cutoff: radial cutoff in Å. Edges connect pairs with 0 < dist <= cutoff.
         dtype:  floating dtype for positions and edge features.
         device: device for all returned tensors.
     """
-    if any(atoms.pbc):
-        raise NotImplementedError("PBC support added in notebook 06")
-
     z = torch.as_tensor(atoms.numbers, dtype=torch.long, device=device)
     pos = torch.as_tensor(atoms.positions, dtype=dtype, device=device)
-    edge_index, edge_vec, edge_dist = _neighbor_list_torch(pos, cutoff)
 
+    if any(atoms.pbc):
+        edge_index, edge_vec, edge_dist, shift_idx = _neighbor_list_ase(
+            atoms, cutoff, dtype, device
+        )
+        cell = torch.as_tensor(atoms.cell.array, dtype=dtype, device=device)
+        pbc = tuple(bool(b) for b in atoms.pbc)  # tuple[bool, bool, bool]
+        return AtomGraph(
+            z=z,
+            pos=pos,
+            edge_index=edge_index,
+            edge_vec=edge_vec,
+            edge_dist=edge_dist,
+            cutoff=float(cutoff),
+            cell=cell,
+            pbc=pbc,
+            shift_idx=shift_idx,
+        )
+
+    # Non-PBC path: unchanged
+    edge_index, edge_vec, edge_dist = _neighbor_list_torch(pos, cutoff)
     return AtomGraph(
         z=z,
         pos=pos,
