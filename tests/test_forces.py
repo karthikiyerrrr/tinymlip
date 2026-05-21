@@ -140,3 +140,44 @@ def test_invariant_forces_match_numerical_gradient(ethanol_atoms):
     assert abs(numerical_force - autograd_force) < 1e-3, (
         f"numerical={numerical_force:.6f}, autograd={autograd_force:.6f}"
     )
+
+
+def test_equivariant_forces_match_numerical_gradient(ethanol_atoms):
+    """Smoking gun for F = -grad(E) on the equivariant model.
+
+    Same protocol as the invariant test above: pick atom 0 axis 0, perturb
+    by eps = 1e-3 A, compare autograd force to central-difference numerical
+    force. Float64 throughout to keep the comparison clean. Tolerance and
+    runtime characteristics match the invariant version.
+    """
+    torch.manual_seed(0)
+    cutoff = 5.0
+    model = EquivariantMPNN(hidden_dim=16, num_basis=8, cutoff=cutoff, n_layers=2).double()
+
+    graph = build_graph(ethanol_atoms, cutoff=cutoff, dtype=torch.float64)
+    graph.pos.requires_grad_(True)
+    energy = model(graph)
+    forces = compute_forces(energy, graph.pos)
+    autograd_force = forces[0, 0].item()
+
+    eps = 1e-3
+
+    atoms_plus = ethanol_atoms.copy()
+    pos_plus = atoms_plus.get_positions()
+    pos_plus[0, 0] += eps
+    atoms_plus.set_positions(pos_plus)
+    graph_plus = build_graph(atoms_plus, cutoff=cutoff, dtype=torch.float64)
+    e_plus = model(graph_plus).item()
+
+    atoms_minus = ethanol_atoms.copy()
+    pos_minus = atoms_minus.get_positions()
+    pos_minus[0, 0] -= eps
+    atoms_minus.set_positions(pos_minus)
+    graph_minus = build_graph(atoms_minus, cutoff=cutoff, dtype=torch.float64)
+    e_minus = model(graph_minus).item()
+
+    numerical_force = -(e_plus - e_minus) / (2 * eps)
+
+    assert abs(numerical_force - autograd_force) < 1e-3, (
+        f"numerical={numerical_force:.6f}, autograd={autograd_force:.6f}"
+    )

@@ -115,9 +115,16 @@ class EquivariantInteraction(nn.Module):
 
     Deviations from PaiNN:
       - Norm computed as Vv.norm(dim=-1) (no epsilon guard). The reference
-        adds a small epsilon for numerical stability in production; we omit
-        it here so the formula reads cleanly. For the tiny test molecules
-        used in the notebooks this is never an issue.
+        adds a small epsilon inside the sqrt for numerical stability in
+        production; we omit it here so the formula reads cleanly. For the
+        tiny test molecules used in the notebooks this is never an issue.
+      - The update-phase vector mixers are two separate nn.Linear modules
+        (U and V), where upstream uses a single Linear(F, 2F, bias=False)
+        whose output is split into mu_W (≙ our U·v) and mu_V (≙ our V·v).
+        Mathematically identical (same parameter count, same expressivity,
+        no bias either way); the split form makes U and V nameable in
+        notebook prose. Initialization variance may differ by a small
+        constant factor since each nn.Linear seeds its weights independently.
 
     Implementers: cross-check both phases against the reference PaiNN code in
     https://github.com/atomistic-machine-learning/schnetpack

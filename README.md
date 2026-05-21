@@ -24,7 +24,7 @@ The repo ships two models: an **invariant** message-passing model (based on SchN
 | 02 | `message_passing.py` | Building a naive MPNN to a SchNet-style `InvariantInteraction` layer; reactive sliders for cutoff and `num_basis`; autograd-derived receptive-field heatmap |
 | 03 | `energy_and_forces.py` | Wrapping `InvariantInteraction` in `InvariantMPNN`; per-atom energy bar chart; force arrows from `torch.autograd.grad`; numerical-gradient check |
 | 04 | `training_invariant.py` | Training `InvariantMPNN` on rMD17 with batched disjoint-union graphs and an energy + force-matching loss; per-element reference shift, learning curves, parity plots, and predicted-vs-true force arrows |
-| 05 | `equivariant_model.py` | Same dataset, equivariant model (PaiNN-based), side-by-side comparison |
+| 05 | `equivariant_model.py` | Motivates equivariance with a live rotation demo (forces rotate, scalars stay flat); dissects PaiNN's three message types (scalar, vector propagation, vector creation); trains `EquivariantMPNN` on rMD17 head-to-head against `InvariantMPNN` under identical hyperparameters and compares validation MAE |
 | 06 | `crystals_and_pbc.py` | Periodic boundary conditions, using the model as an ASE calculator |
 
 Each notebook runs end-to-end in under 5 minutes on CPU at the default `tiny` config.
