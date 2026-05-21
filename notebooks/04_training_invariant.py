@@ -526,7 +526,7 @@ def _(
         f"After training, the same batch evaluated on the trained model has losses "
         f"dropped by orders of magnitude. (The learning curves below show this "
         f"happening epoch-by-epoch, but having it in one place makes the "
-        f"\"training did something\" moment unambiguous.)"
+        f'"training did something" moment unambiguous.)'
     )
     return
 
@@ -865,10 +865,7 @@ def _(
     # For ethanol every frame is C2H6O, so the shift is constant per frame,
     # but compute it generically so the same code works in notebook 06.
     _shift_per_frame = np.array(
-        [
-            sum(shifts[int(z)] for z in atoms.numbers)
-            for atoms in test_bundle.structures
-        ]
+        [sum(shifts[int(z)] for z in atoms.numbers) for atoms in test_bundle.structures]
     )
     e_true_res = e_true - _shift_per_frame
     e_pred_res = e_pred - _shift_per_frame
