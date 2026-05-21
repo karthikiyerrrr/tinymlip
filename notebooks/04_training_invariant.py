@@ -735,6 +735,16 @@ def _(mo):
 
     We do this manually rather than calling `evaluate(...)` so we can keep the
     raw arrays for plotting (MAE alone hides the shape of the errors).
+
+    **The three panels show different views of the same fit.** The
+    absolute-energy panel (left) looks beautifully tight — but the visual
+    tightness there is the per-element shift doing most of the work, since
+    the shift alone explains the −97 000 kcal/mol baseline. The residual
+    panel (middle) shows the **model's** contribution after the shift has
+    been removed: the spread there is the actual ~kcal/mol scale the
+    model is fitting, and is what the per-atom MAE in the title literally
+    measures. Forces (right) aren't shifted, so the force parity doesn't
+    have this masking problem.
     """)
     return
 
@@ -808,19 +818,23 @@ def _(
     go,
     make_subplots,
     np,
+    shifts,
+    test_bundle,
     test_energy_mae,
     test_force_mae,
 ):
     fig_parity = make_subplots(
         rows=1,
-        cols=2,
+        cols=3,
         subplot_titles=(
-            f"Energy parity (per-atom MAE = {test_energy_mae:.4f} kcal/mol)",
-            f"Force component parity (MAE = {test_force_mae:.4f} kcal/mol/Å)",
+            f"Absolute E (per-atom MAE = {test_energy_mae:.4f} kcal/mol)",
+            "Residual E (model only, shift removed)",
+            f"Force components (MAE = {test_force_mae:.4f} kcal/mol/Å)",
         ),
-        horizontal_spacing=0.12,
+        horizontal_spacing=0.08,
     )
 
+    # --- Panel 1: absolute energies (unchanged) ---
     _e_lo, _e_hi = float(min(e_true.min(), e_pred.min())), float(max(e_true.max(), e_pred.max()))
     fig_parity.add_trace(
         go.Scatter(
@@ -847,9 +861,46 @@ def _(
         col=1,
     )
 
+    # --- Panel 2: residuals (absolute energy minus per-frame composition shift) ---
+    # For ethanol every frame is C2H6O, so the shift is constant per frame,
+    # but compute it generically so the same code works in notebook 06.
+    _shift_per_frame = np.array(
+        [
+            sum(shifts[int(z)] for z in atoms.numbers)
+            for atoms in test_bundle.structures
+        ]
+    )
+    e_true_res = e_true - _shift_per_frame
+    e_pred_res = e_pred - _shift_per_frame
+    _r_lo = float(min(e_true_res.min(), e_pred_res.min()))
+    _r_hi = float(max(e_true_res.max(), e_pred_res.max()))
+    fig_parity.add_trace(
+        go.Scatter(
+            x=e_true_res,
+            y=e_pred_res,
+            mode="markers",
+            marker=dict(color="#2ca02c", size=6, opacity=0.7),
+            showlegend=False,
+            hovertemplate="true_res=%{x:.4f}<br>pred_res=%{y:.4f}<extra></extra>",
+        ),
+        row=1,
+        col=2,
+    )
+    fig_parity.add_trace(
+        go.Scatter(
+            x=[_r_lo, _r_hi],
+            y=[_r_lo, _r_hi],
+            mode="lines",
+            line=dict(dash="dash", color="#888"),
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        row=1,
+        col=2,
+    )
+
+    # --- Panel 3: forces (unchanged) ---
     _f_lo, _f_hi = float(min(f_true.min(), f_pred.min())), float(max(f_true.max(), f_pred.max()))
-    # Subsample to keep the scatter trace light (2700 points hovered is fine,
-    # but 100k+ atoms x 3 components on a larger molecule would not be).
     _rng = np.random.default_rng(0)
     _idx = _rng.choice(len(f_true), size=min(1500, len(f_true)), replace=False)
     fig_parity.add_trace(
@@ -862,7 +913,7 @@ def _(
             hovertemplate="true=%{x:.2f}<br>pred=%{y:.2f}<extra></extra>",
         ),
         row=1,
-        col=2,
+        col=3,
     )
     fig_parity.add_trace(
         go.Scatter(
@@ -874,13 +925,16 @@ def _(
             hoverinfo="skip",
         ),
         row=1,
-        col=2,
+        col=3,
     )
-    fig_parity.update_xaxes(title_text="true energy (kcal/mol)", row=1, col=1)
-    fig_parity.update_yaxes(title_text="predicted energy (kcal/mol)", row=1, col=1)
-    fig_parity.update_xaxes(title_text="true F component (kcal/mol/Å)", row=1, col=2)
-    fig_parity.update_yaxes(title_text="predicted F component (kcal/mol/Å)", row=1, col=2)
-    fig_parity.update_layout(height=420, margin=dict(l=10, r=10, t=60, b=40))
+
+    fig_parity.update_xaxes(title_text="true E (kcal/mol)", row=1, col=1)
+    fig_parity.update_yaxes(title_text="predicted E (kcal/mol)", row=1, col=1)
+    fig_parity.update_xaxes(title_text="true E − Σ shift(z) (kcal/mol)", row=1, col=2)
+    fig_parity.update_yaxes(title_text="predicted E − Σ shift(z) (kcal/mol)", row=1, col=2)
+    fig_parity.update_xaxes(title_text="true F component (kcal/mol/Å)", row=1, col=3)
+    fig_parity.update_yaxes(title_text="predicted F component (kcal/mol/Å)", row=1, col=3)
+    fig_parity.update_layout(height=420, margin=dict(l=10, r=10, t=80, b=40))
     fig_parity
     return
 
