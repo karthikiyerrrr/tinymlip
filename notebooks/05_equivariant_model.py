@@ -339,5 +339,119 @@ def _(element_color, go, graph_vec, np, v1, vec_channel):
     return
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(
+        r"""
+        ## 3. The message phase, dissected
+
+        `EquivariantInteraction` packs PaiNN's message phase and update phase
+        into one `forward()`. Nb02 already dissected an invariant message phase
+        by hand; here we do the same for the equivariant one — same skeleton,
+        but with **three** messages per edge instead of one:
+
+        1. **Scalar message** $m^s_{ij} = \psi^s(s_j) \cdot \phi^s(r_{ij})$ —
+           same idea as the SchNet message in nb02.
+        2. **Vector propagation** $m^{vv}_{ij} = \psi^{vv}(s_j) \cdot \phi^{vv}(r_{ij}) \cdot v_j$ —
+           transport the sender's existing vector along the edge. (No-op on the
+           first layer call, since `v=0` initially.)
+        3. **Vector creation** $m^{vs}_{ij} = \psi^{vs}(s_j) \cdot \phi^{vs}(r_{ij}) \cdot \hat{r}_{ij}$ —
+           build a fresh vector from the edge direction, scaled by a scalar weight.
+
+        Then `index_add_` both to receivers (one scatter for the scalar
+        aggregate $\Delta s$, one for the vector aggregate
+        $\Delta v = \sum (m^{vv} + m^{vs})$).
+        """
+    )
+    return
+
+
+@app.cell
+def _(F_vec, graph_vec, layer_vec, s0, torch):
+    # Reuse layer_vec, graph_vec, s0 from section 3.
+    src, dst = graph_vec.edge_index  # [E], [E]
+    edge_vec = graph_vec.pos[dst] - graph_vec.pos[src]  # [E, 3]
+    r = edge_vec.norm(dim=-1).clamp(min=1e-6)  # [E]
+    unit = edge_vec / r.unsqueeze(-1)  # [E, 3]
+
+    with torch.no_grad():
+        rbf = layer_vec.basis(r) * layer_vec.envelope(r).unsqueeze(-1)  # [E, num_basis]
+        phi_s, phi_vv, phi_vs = layer_vec.filter_net(rbf).chunk(3, dim=-1)  # each [E, F]
+        psi_s, psi_vv, psi_vs = layer_vec.psi(s0)[src].chunk(3, dim=-1)  # each [E, F]
+
+        # Use v=0 to start (matches section 3's bootstrap).
+        v_in = torch.zeros(graph_vec.n_atoms, F_vec, 3)
+
+        m_s = psi_s * phi_s  # [E, F]
+        m_vv = (psi_vv * phi_vv).unsqueeze(-1) * v_in[src]  # [E, F, 3]  (zero on first layer)
+        m_vs = (psi_vs * phi_vs).unsqueeze(-1) * unit.unsqueeze(-2)  # [E, F, 3]
+
+        ds = torch.zeros_like(s0).index_add_(0, dst, m_s)  # [N, F]
+        dv = torch.zeros_like(v_in).index_add_(0, dst, m_vv + m_vs)  # [N, F, 3]
+        s_after_msg = s0 + ds
+        v_after_msg = v_in + dv
+
+    print("Δs norm:", float(ds.norm()))
+    print("m_vv contribution to Δv (should be 0 since v_in=0):", float(m_vv.norm()))
+    print("m_vs contribution to Δv:", float(m_vs.norm()))
+    print("v after message phase norm:", float(v_after_msg.norm()))
+    return s_after_msg, v_after_msg, v_in
+
+
+@app.cell
+def _(AtomGraph, graph_vec, layer_vec, np, s0, s_after_msg, torch, v_after_msg, v_in):
+    # `EquivariantInteraction.forward` fuses message + update. We can't directly
+    # pull "message-only" out without copying the layer's first half, so we
+    # instead verify rotation equivariance of our hand-built version directly
+    # (the same property the real layer holds).
+    torch.manual_seed(7)
+    R = torch.tensor(  # noqa: N806 — standard rotation notation
+        [
+            [np.cos(0.6), -np.sin(0.6), 0.0],
+            [np.sin(0.6), np.cos(0.6), 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+
+    _pos_rot = graph_vec.pos @ R.T
+    _graph_rot = AtomGraph(
+        z=graph_vec.z,
+        pos=_pos_rot,
+        edge_index=graph_vec.edge_index,
+        edge_vec=_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]],
+        edge_dist=(_pos_rot[graph_vec.edge_index[1]] - _pos_rot[graph_vec.edge_index[0]]).norm(dim=-1),
+        cutoff=graph_vec.cutoff,
+    )
+
+    # Re-run the hand-built message phase on the rotated graph (v_in still zeros).
+    src_r, dst_r = _graph_rot.edge_index
+    edge_vec_r = _graph_rot.pos[dst_r] - _graph_rot.pos[src_r]
+    r_r = edge_vec_r.norm(dim=-1).clamp(min=1e-6)
+    unit_r = edge_vec_r / r_r.unsqueeze(-1)
+
+    with torch.no_grad():
+        rbf_r = layer_vec.basis(r_r) * layer_vec.envelope(r_r).unsqueeze(-1)
+        phi_s_r, phi_vv_r, phi_vs_r = layer_vec.filter_net(rbf_r).chunk(3, dim=-1)
+        psi_s_r, psi_vv_r, psi_vs_r = layer_vec.psi(s0)[src_r].chunk(3, dim=-1)
+        m_s_r = psi_s_r * phi_s_r
+        m_vs_r = (psi_vs_r * phi_vs_r).unsqueeze(-1) * unit_r.unsqueeze(-2)
+        ds_r = torch.zeros_like(s0).index_add_(0, dst_r, m_s_r)
+        dv_r = torch.zeros_like(v_in).index_add_(0, dst_r, m_vs_r)
+        s_after_msg_r = s0 + ds_r
+        v_after_msg_r = v_in + dv_r
+
+    # Expected: s unchanged; v rotated by R (i.e. v @ R.T).
+    scalar_drift = float((s_after_msg_r - s_after_msg).abs().max())
+    vector_residual = float((v_after_msg_r - v_after_msg @ R.T).abs().max())
+
+    print(f"max scalar drift under rotation: {scalar_drift:.2e}  (expect ~0)")
+    print(f"max vector residual after rotating output: {vector_residual:.2e}  (expect ~0)")
+    assert scalar_drift < 1e-5, "scalar features changed under rotation — bug!"
+    assert vector_residual < 1e-5, "vectors did not rotate as expected — bug!"
+    print("\nOK — message phase is rotation-equivariant. Scalars are invariant, vectors rotate with the molecule.")
+    return
+
+
 if __name__ == "__main__":
     app.run()
