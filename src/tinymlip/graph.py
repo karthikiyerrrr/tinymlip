@@ -220,37 +220,41 @@ def collate_graphs(graphs: list[AtomGraph]) -> AtomGraph:
 
     Standard MLIP batching trick: stack the per-frame graphs into one large
     graph with the union of nodes and edges, and add a `batch` vector that
-    records which frame each atom belongs to. Because each graph's edges only
-    connect its own atoms, the union has no edges crossing between frames —
-    so a single forward pass through any of the layers in `tinymlip.layers`
-    handles all frames at once.
+    records which frame each atom belongs to. Each graph's edges only connect
+    its own atoms, so a single forward pass through any layer handles all
+    frames at once.
+
+    Under PBC, each frame may have a different cell — these are stacked into a
+    [B, 3, 3] tensor. Each edge's `shift_idx` (lattice offset) is concatenated.
+    The model selects the right per-edge cell via `cell[batch[edge_index[0]]]`.
 
     Args:
         graphs: list of AtomGraph (single-frame, batch is None). Must share
-            `cutoff`. PBC and `cell` are not supported here yet (PBC arrives
-            with notebook 06).
+            `cutoff`. All graphs in a batch must be uniformly PBC or uniformly
+            non-PBC — mixing is rejected.
 
     Returns:
-        A new AtomGraph with concatenated `z`, `pos`, `edge_vec`, `edge_dist`;
-        `edge_index` offset per-frame so all indices live in [0, sum_n_atoms);
-        and a `batch` tensor of shape [sum_n_atoms] mapping atom -> frame.
+        A new AtomGraph with:
+          - concatenated `z`, `pos`, `edge_vec`, `edge_dist`, `shift_idx` (when PBC);
+          - `edge_index` offset per-frame so all indices live in [0, sum_N);
+          - `cell` stacked to [B, 3, 3] (when PBC), else None;
+          - `batch` tensor of shape [sum_N] mapping atom -> frame.
     """
     if not graphs:
         raise ValueError("collate_graphs requires at least one graph")
     cutoff = graphs[0].cutoff
     if any(g.cutoff != cutoff for g in graphs):
         raise ValueError("collate_graphs: all graphs must share the same cutoff")
-    if any(any(g.pbc) for g in graphs):
-        raise NotImplementedError("collate_graphs does not support PBC yet (nb 06)")
+    pbc_flags = [any(g.pbc) for g in graphs]
+    if any(pbc_flags) and not all(pbc_flags):
+        raise ValueError("collate_graphs: cannot mix PBC and non-PBC graphs in one batch")
+    is_pbc = all(pbc_flags)
 
     z = torch.cat([g.z for g in graphs], dim=0)  # [sum_N]
     pos = torch.cat([g.pos for g in graphs], dim=0)  # [sum_N, 3]
     edge_vec = torch.cat([g.edge_vec for g in graphs], dim=0)  # [sum_E, 3]
     edge_dist = torch.cat([g.edge_dist for g in graphs], dim=0)  # [sum_E]
 
-    # Offset each graph's edge_index by the running atom count so all indices
-    # point inside the concatenated `z` / `pos`. (Edges still only connect
-    # atoms inside their own frame — that's what makes the union "disjoint".)
     edge_indices: list[torch.Tensor] = []
     batch_pieces: list[torch.Tensor] = []
     offset = 0
@@ -261,6 +265,15 @@ def collate_graphs(graphs: list[AtomGraph]) -> AtomGraph:
     edge_index = torch.cat(edge_indices, dim=1)  # [2, sum_E]
     batch = torch.cat(batch_pieces, dim=0)  # [sum_N]
 
+    if is_pbc:
+        shift_idx = torch.cat([g.shift_idx for g in graphs], dim=0)  # [sum_E, 3]
+        cell = torch.stack([g.cell for g in graphs], dim=0)  # [B, 3, 3]
+        pbc_out = graphs[0].pbc  # uniform across the batch
+    else:
+        shift_idx = None
+        cell = None
+        pbc_out = (False, False, False)
+
     return AtomGraph(
         z=z,
         pos=pos,
@@ -268,7 +281,8 @@ def collate_graphs(graphs: list[AtomGraph]) -> AtomGraph:
         edge_vec=edge_vec,
         edge_dist=edge_dist,
         cutoff=cutoff,
-        cell=None,
-        pbc=(False, False, False),
+        cell=cell,
+        pbc=pbc_out,
         batch=batch,
+        shift_idx=shift_idx,
     )
