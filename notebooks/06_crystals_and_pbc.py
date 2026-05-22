@@ -46,26 +46,23 @@ def _():
 
 @app.cell
 def _():
+    import ase.build
     import numpy as np
     import plotly.graph_objects as go
     import polars as pl
     import torch
+    from ase.calculators.emt import EMT
     from torch.utils.data import DataLoader
 
-    import ase.build
-    from ase.calculators.emt import EMT
-
     from tinymlip.data import (
-        generate_cu_dataset,
         load_cu_emt,
         make_collate,
         to_torch_dataset_cu_emt,
     )
     from tinymlip.forces import compute_forces_and_stress
-    from tinymlip.graph import build_graph, collate_graphs
-    from tinymlip.layers import EquivariantInteraction
+    from tinymlip.graph import build_graph
     from tinymlip.models import EquivariantMPNN
-    from tinymlip.train import energy_force_loss, evaluate, fit_atomic_reference, train
+    from tinymlip.train import evaluate, fit_atomic_reference, train
     from tinymlip.viz import e_v_curve
 
     return (
@@ -75,6 +72,7 @@ def _():
         ase,
         build_graph,
         compute_forces_and_stress,
+        e_v_curve,
         evaluate,
         fit_atomic_reference,
         go,
@@ -90,7 +88,9 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    a_slider = mo.ui.slider(start=3.0, stop=4.5, step=0.05, value=3.615, label="lattice constant a (Å)")
+    a_slider = mo.ui.slider(
+        start=3.0, stop=4.5, step=0.05, value=3.615, label="lattice constant a (Å)"
+    )
     cutoff_slider = mo.ui.slider(start=2.5, stop=5.5, step=0.1, value=4.0, label="cutoff (Å)")
     mo.hstack([a_slider, cutoff_slider])
     return a_slider, cutoff_slider
@@ -166,26 +166,51 @@ def _(fcc_cu, g, go):
         for i in (-1, 0, 1):
             for j in (-1, 0, 1):
                 origin = i * a1 + j * a2
-                corners_x = [origin[0], origin[0] + a1[0], origin[0] + a1[0] + a2[0], origin[0] + a2[0], origin[0]]
-                corners_y = [origin[1], origin[1] + a1[1], origin[1] + a1[1] + a2[1], origin[1] + a2[1], origin[1]]
-                is_central = (i == 0 and j == 0)
-                fig.add_trace(go.Scatter(
-                    x=corners_x, y=corners_y, mode="lines",
-                    line=dict(color="#444" if is_central else "#bbb", width=2 if is_central else 1),
-                    hoverinfo="skip", showlegend=False,
-                ))
+                corners_x = [
+                    origin[0],
+                    origin[0] + a1[0],
+                    origin[0] + a1[0] + a2[0],
+                    origin[0] + a2[0],
+                    origin[0],
+                ]
+                corners_y = [
+                    origin[1],
+                    origin[1] + a1[1],
+                    origin[1] + a1[1] + a2[1],
+                    origin[1] + a2[1],
+                    origin[1],
+                ]
+                is_central = i == 0 and j == 0
+                fig.add_trace(
+                    go.Scatter(
+                        x=corners_x,
+                        y=corners_y,
+                        mode="lines",
+                        line=dict(
+                            color="#444" if is_central else "#bbb", width=2 if is_central else 1
+                        ),
+                        hoverinfo="skip",
+                        showlegend=False,
+                    )
+                )
                 # Atoms in this tile
                 xs = pos[:, 0] + origin[0]
                 ys = pos[:, 1] + origin[1]
-                fig.add_trace(go.Scatter(
-                    x=xs, y=ys, mode="markers",
-                    marker=dict(size=14 if is_central else 9,
-                                color="#b87333" if is_central else "#e7c9a8",
-                                line=dict(color="#333", width=1)),
-                    hoverinfo="text",
-                    text=[f"atom {k} tile ({i},{j})" for k in range(len(pos))],
-                    showlegend=False,
-                ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=xs,
+                        y=ys,
+                        mode="markers",
+                        marker=dict(
+                            size=14 if is_central else 9,
+                            color="#b87333" if is_central else "#e7c9a8",
+                            line=dict(color="#333", width=1),
+                        ),
+                        hoverinfo="text",
+                        text=[f"atom {k} tile ({i},{j})" for k in range(len(pos))],
+                        showlegend=False,
+                    )
+                )
 
         # Edges (only those originating from the central cell, projected to xy).
         # Only draw edges whose shift lies in the xy plane (S_z == 0) so they show
@@ -206,22 +231,28 @@ def _(fcc_cu, g, go):
                 in_xy_drawn_intra = True
             else:
                 in_xy_drawn_inter = True
-            fig.add_trace(go.Scatter(
-                x=[a[0], b[0]], y=[a[1], b[1]], mode="lines",
-                line=dict(color=color, width=1.2),
-                name=name, legendgroup=name, showlegend=show,
-                hoverinfo="skip",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=[a[0], b[0]],
+                    y=[a[1], b[1]],
+                    mode="lines",
+                    line=dict(color=color, width=1.2),
+                    name=name,
+                    legendgroup=name,
+                    showlegend=show,
+                    hoverinfo="skip",
+                )
+            )
 
         a = atoms.cell.array[0, 0]
         fig.update_layout(
             xaxis=dict(title="x (Å)", scaleanchor="y", scaleratio=1),
             yaxis=dict(title="y (Å)"),
             title=f"FCC Cu (a={a:.2f} Å), central cell + 8 image cells (z=0 slice)",
-            width=600, height=600,
+            width=600,
+            height=600,
         )
         return fig
-
 
     _image_tile_plot(g, fcc_cu)
     return
@@ -319,18 +350,26 @@ def _(
     volume = demo_g.cell.det().abs().item()
     for i in range(3):
         for j in range(3):
-            ep = torch.zeros(3, 3, dtype=torch.float64); ep[i, j] += h; ep[j, i] += h
-            em = torch.zeros(3, 3, dtype=torch.float64); em[i, j] -= h; em[j, i] -= h
-            e_plus = demo_model(_replace(
-                demo_g,
-                pos=demo_g.pos + demo_g.pos @ ep,
-                cell=demo_g.cell + demo_g.cell @ ep,
-            )).sum()
-            e_minus = demo_model(_replace(
-                demo_g,
-                pos=demo_g.pos + demo_g.pos @ em,
-                cell=demo_g.cell + demo_g.cell @ em,
-            )).sum()
+            ep = torch.zeros(3, 3, dtype=torch.float64)
+            ep[i, j] += h
+            ep[j, i] += h
+            em = torch.zeros(3, 3, dtype=torch.float64)
+            em[i, j] -= h
+            em[j, i] -= h
+            e_plus = demo_model(
+                _replace(
+                    demo_g,
+                    pos=demo_g.pos + demo_g.pos @ ep,
+                    cell=demo_g.cell + demo_g.cell @ ep,
+                )
+            ).sum()
+            e_minus = demo_model(
+                _replace(
+                    demo_g,
+                    pos=demo_g.pos + demo_g.pos @ em,
+                    cell=demo_g.cell + demo_g.cell @ em,
+                )
+            ).sum()
             sigma_num[i, j] = (e_plus - e_minus) / (4 * h) / volume
     sigma_num = 0.5 * (sigma_num + sigma_num.T)
 
@@ -338,30 +377,29 @@ def _(
     _s_ad = sigma_ad.detach().numpy()
     _s_nm = sigma_num.detach().numpy()
 
-    mo.vstack([
-        mo.md(
-            f"**max |σ_autograd − σ_numerical| = {max_abs_err:.3e}**  "
-            f"(target: < 1e-5)"
-        ),
-        mo.md("σ autograd (eV/Å³)"),
-        pl.DataFrame(
-            {
-                "axis": ["x", "y", "z"],
-                "σ·x̂": _s_ad[:, 0].tolist(),
-                "σ·ŷ": _s_ad[:, 1].tolist(),
-                "σ·ẑ": _s_ad[:, 2].tolist(),
-            }
-        ),
-        mo.md("σ numerical (eV/Å³)"),
-        pl.DataFrame(
-            {
-                "axis": ["x", "y", "z"],
-                "σ·x̂": _s_nm[:, 0].tolist(),
-                "σ·ŷ": _s_nm[:, 1].tolist(),
-                "σ·ẑ": _s_nm[:, 2].tolist(),
-            }
-        ),
-    ])
+    mo.vstack(
+        [
+            mo.md(f"**max |σ_autograd − σ_numerical| = {max_abs_err:.3e}**  (target: < 1e-5)"),
+            mo.md("σ autograd (eV/Å³)"),
+            pl.DataFrame(
+                {
+                    "axis": ["x", "y", "z"],
+                    "σ·x̂": _s_ad[:, 0].tolist(),
+                    "σ·ŷ": _s_ad[:, 1].tolist(),
+                    "σ·ẑ": _s_ad[:, 2].tolist(),
+                }
+            ),
+            mo.md("σ numerical (eV/Å³)"),
+            pl.DataFrame(
+                {
+                    "axis": ["x", "y", "z"],
+                    "σ·x̂": _s_nm[:, 0].tolist(),
+                    "σ·ŷ": _s_nm[:, 1].tolist(),
+                    "σ·ẑ": _s_nm[:, 2].tolist(),
+                }
+            ),
+        ]
+    )
     return
 
 
@@ -415,36 +453,38 @@ def _(EMT, ase, mo, pl):
     snap_F = snap.get_forces()
     snap_sigma = snap.get_stress(voigt=False)
 
-    mo.vstack([
-        mo.md("**Single EMT snapshot:** 2×2×2 FCC Cu (32 atoms), rattle stdev=0.05 Å"),
-        pl.DataFrame(
-            {
-                "quantity": [
-                    "total energy (eV)",
-                    "per-atom energy (eV)",
-                    "|F|_max (eV/Å)",
-                    "|F|_mean (eV/Å)",
-                    "tr(σ)/3 = pressure (eV/Å³)",
-                ],
-                "value": [
-                    f"{snap_E:.4f}",
-                    f"{snap_E / len(snap):.4f}",
-                    f"{abs(snap_F).max():.3f}",
-                    f"{abs(snap_F).mean():.3f}",
-                    f"{snap_sigma.trace() / 3:.4e}",
-                ],
-            }
-        ),
-        mo.md("σ (eV/Å³)"),
-        pl.DataFrame(
-            {
-                "axis": ["x", "y", "z"],
-                "σ·x̂": snap_sigma[:, 0].tolist(),
-                "σ·ŷ": snap_sigma[:, 1].tolist(),
-                "σ·ẑ": snap_sigma[:, 2].tolist(),
-            }
-        ),
-    ])
+    mo.vstack(
+        [
+            mo.md("**Single EMT snapshot:** 2×2×2 FCC Cu (32 atoms), rattle stdev=0.05 Å"),
+            pl.DataFrame(
+                {
+                    "quantity": [
+                        "total energy (eV)",
+                        "per-atom energy (eV)",
+                        "|F|_max (eV/Å)",
+                        "|F|_mean (eV/Å)",
+                        "tr(σ)/3 = pressure (eV/Å³)",
+                    ],
+                    "value": [
+                        f"{snap_E:.4f}",
+                        f"{snap_E / len(snap):.4f}",
+                        f"{abs(snap_F).max():.3f}",
+                        f"{abs(snap_F).mean():.3f}",
+                        f"{snap_sigma.trace() / 3:.4e}",
+                    ],
+                }
+            ),
+            mo.md("σ (eV/Å³)"),
+            pl.DataFrame(
+                {
+                    "axis": ["x", "y", "z"],
+                    "σ·x̂": snap_sigma[:, 0].tolist(),
+                    "σ·ŷ": snap_sigma[:, 1].tolist(),
+                    "σ·ẑ": snap_sigma[:, 2].tolist(),
+                }
+            ),
+        ]
+    )
     return
 
 
@@ -477,10 +517,12 @@ def _(load_cu_emt, mo):
     )
     elapsed = time.time() - t0
 
-    mo.vstack([
-        mo.md(f"Generated/loaded **{len(all_atoms)}** snapshots in **{elapsed:.1f} s**"),
-        meta.head(),
-    ])
+    mo.vstack(
+        [
+            mo.md(f"Generated/loaded **{len(all_atoms)}** snapshots in **{elapsed:.1f} s**"),
+            meta.head(),
+        ]
+    )
     return all_atoms, meta
 
 
@@ -541,9 +583,9 @@ def _(
     train,
     w_s_slider,
 ):
-    train_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "train"]
-    val_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "val"]
-    test_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "test"]
+    train_atoms = [a for a, s in zip(all_atoms, meta["split"], strict=True) if s == "train"]
+    val_atoms = [a for a, s in zip(all_atoms, meta["split"], strict=True) if s == "val"]
+    test_atoms = [a for a, s in zip(all_atoms, meta["split"], strict=True) if s == "test"]
 
     shifts = fit_atomic_reference(
         train_atoms,
@@ -553,35 +595,49 @@ def _(
     collate = make_collate(cutoff=4.0)
     train_loader = DataLoader(
         to_torch_dataset_cu_emt(train_atoms),
-        batch_size=8, shuffle=True, collate_fn=collate,
+        batch_size=8,
+        shuffle=True,
+        collate_fn=collate,
     )
     val_loader = DataLoader(
         to_torch_dataset_cu_emt(val_atoms),
-        batch_size=16, shuffle=False, collate_fn=collate,
+        batch_size=16,
+        shuffle=False,
+        collate_fn=collate,
     )
 
     torch.manual_seed(0)
     model = EquivariantMPNN(
-        n_layers=3, hidden_dim=hidden_slider.value, num_basis=20, cutoff=4.0,
+        n_layers=3,
+        hidden_dim=hidden_slider.value,
+        num_basis=20,
+        cutoff=4.0,
     )
     log = train(
-        model, train_loader, val_loader,
-        n_epochs=n_epochs_slider.value, lr=1e-3,
-        w_e=1.0, w_f=100.0, w_s=w_s_slider.value,
+        model,
+        train_loader,
+        val_loader,
+        n_epochs=n_epochs_slider.value,
+        lr=1e-3,
+        w_e=1.0,
+        w_f=100.0,
+        w_s=w_s_slider.value,
         shifts=shifts,
     )
 
-    mo.vstack([
-        mo.md(
-            f"""
+    mo.vstack(
+        [
+            mo.md(
+                f"""
     - **Splits:** {len(train_atoms)} train / {len(val_atoms)} val / {len(test_atoms)} test
     - **Per-Cu reference shift:** {shifts[29]:.4f} eV
     - **Training:** EquivariantMPNN(n_layers=3, hidden_dim={hidden_slider.value}, num_basis=20, cutoff=4.0) for {n_epochs_slider.value} epochs
     """
-        ),
-        mo.md("**Last 6 log rows:**"),
-        log.tail(6),
-    ])
+            ),
+            mo.md("**Last 6 log rows:**"),
+            log.tail(6),
+        ]
+    )
     return collate, log, model, shifts, test_atoms
 
 
@@ -592,16 +648,20 @@ def _(go, log, pl):
         _sub = log.filter(pl.col("split") == _split)
         _fig.add_trace(
             go.Scatter(
-                x=_sub["epoch"], y=_sub["loss"],
-                mode="lines+markers", name=f"{_split} loss",
+                x=_sub["epoch"],
+                y=_sub["loss"],
+                mode="lines+markers",
+                name=f"{_split} loss",
                 line=dict(color=_color),
             )
         )
     _fig.update_layout(
-        xaxis_title="epoch", yaxis_title="loss",
+        xaxis_title="epoch",
+        yaxis_title="loss",
         yaxis_type="log",
         title="Training curve — Cu/EMT, E + F + σ loss",
-        width=700, height=400,
+        width=700,
+        height=400,
     )
     _fig
     return
@@ -622,35 +682,254 @@ def _(
 ):
     test_loader = DataLoader(
         to_torch_dataset_cu_emt(test_atoms),
-        batch_size=16, shuffle=False, collate_fn=collate,
+        batch_size=16,
+        shuffle=False,
+        collate_fn=collate,
     )
     test_metrics = evaluate(
-        model, test_loader,
-        shifts=shifts, w_e=1.0, w_f=100.0, w_s=w_s_slider.value,
+        model,
+        test_loader,
+        shifts=shifts,
+        w_e=1.0,
+        w_f=100.0,
+        w_s=w_s_slider.value,
     )
     # n_atoms per snapshot is constant for this dataset, so per-atom energy MAE
     # is well-defined. Convert all to meV (or meV/Å, meV/Å³) for readability.
     _n_atoms_per_snap = test_atoms[0].get_global_number_of_atoms()
 
-    mo.vstack([
-        mo.md(f"**Test-set MAEs** ({len(test_atoms)} snapshots, batch 16):"),
-        pl.DataFrame(
-            {
-                "metric": [
-                    "energy (meV / atom)",
-                    "force component (meV / Å)",
-                    "stress component (meV / Å³)",
-                    "total loss",
-                ],
-                "value": [
-                    f"{1000 * test_metrics['energy_mae'] / _n_atoms_per_snap:.3f}",
-                    f"{1000 * test_metrics['force_mae']:.3f}",
-                    f"{1000 * test_metrics['stress_mae']:.3f}" if "stress_mae" in test_metrics else "—",
-                    f"{test_metrics['loss']:.4f}",
-                ],
-            }
-        ),
-    ])
+    mo.vstack(
+        [
+            mo.md(f"**Test-set MAEs** ({len(test_atoms)} snapshots, batch 16):"),
+            pl.DataFrame(
+                {
+                    "metric": [
+                        "energy (meV / atom)",
+                        "force component (meV / Å)",
+                        "stress component (meV / Å³)",
+                        "total loss",
+                    ],
+                    "value": [
+                        f"{1000 * test_metrics['energy_mae'] / _n_atoms_per_snap:.3f}",
+                        f"{1000 * test_metrics['force_mae']:.3f}",
+                        f"{1000 * test_metrics['stress_mae']:.3f}"
+                        if "stress_mae" in test_metrics
+                        else "—",
+                        f"{test_metrics['loss']:.4f}",
+                    ],
+                }
+            ),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Verification: does the trained model respect the physics?
+
+    Three sanity checks on the **test set** (snapshots the model never saw):
+
+    1. **Extensivity** — replicate a snapshot, energy should double and stress
+       should stay the same.
+    2. **E–V curve** — predicted E(V) under isotropic volumetric strain should
+       track ASE's EMT reference.
+    3. **Rotation equivariance** — under a random proper rotation `R`, energy
+       should be invariant, forces should rotate as `F → F·Rᵀ`, and stress
+       should rotate as `σ → R σ Rᵀ`.
+
+    Tolerances here are looser than in the unit-test suite (~1e-4 vs 1e-6)
+    because we are running the trained `fp32` model rather than the
+    bit-exact `fp64` test fixture — but the same identities hold.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 1. Supercell extensivity
+
+    Replicating a snapshot 2× along one axis doubles every atom; an
+    extensive quantity (energy) should double, an intensive one (stress)
+    should not change.
+    """)
+    return
+
+
+@app.cell
+def _(
+    build_graph,
+    compute_forces_and_stress,
+    mo,
+    model,
+    pl,
+    test_atoms,
+    torch,
+):
+    _test_atom_0 = test_atoms[0]
+    _big = _test_atom_0.repeat((2, 1, 1))
+
+    _g_small = build_graph(_test_atom_0, cutoff=4.0, dtype=torch.float32)
+    _g_big = build_graph(_big, cutoff=4.0, dtype=torch.float32)
+    _E_s, _, _sigma_s = compute_forces_and_stress(model, _g_small)
+    _E_b, _, _sigma_b = compute_forces_and_stress(model, _g_big)
+
+    _ratio = (_E_b / _E_s).item()
+    _sigma_diff = (_sigma_b - _sigma_s).abs().max().item()
+
+    mo.vstack(
+        [
+            pl.DataFrame(
+                {
+                    "quantity": [
+                        "E_small (eV)",
+                        "E_big (eV)",
+                        "E_big / E_small",
+                        "max |σ_big − σ_small| (eV/Å³)",
+                    ],
+                    "value": [
+                        f"{_E_s.item():.4f}",
+                        f"{_E_b.item():.4f}",
+                        f"{_ratio:.4f}  (expect ≈ 2.0)",
+                        f"{_sigma_diff:.3e}  (expect ≈ 0)",
+                    ],
+                }
+            ),
+        ]
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 2. Energy–volume curve vs EMT
+
+    For each volume fraction `f ∈ [0.9, 1.1]`, isotropically scale the
+    base snapshot's cell and atoms by `f^(1/3)`, run both the model and
+    EMT, and overlay the resulting `E(V)` curves. The two curves should
+    track each other; deviations are the model's generalization error to
+    deformations it didn't see during training.
+    """)
+    return
+
+
+@app.cell
+def _(EMT, e_v_curve, model, np, test_atoms):
+    _base = test_atoms[0]
+    _volume_fractions = np.linspace(0.9, 1.1, 11)
+
+    _ref_energies = []
+    for _f in _volume_fractions:
+        _a = _base.copy()
+        _a.set_cell(_base.cell.array * float(_f) ** (1 / 3), scale_atoms=True)
+        _a.calc = EMT()
+        _ref_energies.append(_a.get_potential_energy())
+
+    _ev_fig = e_v_curve(model, _base, list(_volume_fractions), reference_energies=_ref_energies)
+    _ev_fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### 3. Rotation equivariance of energy, forces, and stress
+
+    Apply a random proper rotation `R ∈ SO(3)` to both the cell and the
+    atomic positions of the same snapshot. The graph builder produces a
+    new (but physically equivalent) graph; the equivariant model should
+    map outputs the standard way: scalars invariant, vectors and rank-2
+    tensors rotated.
+    """)
+    return
+
+
+@app.cell
+def _(build_graph, compute_forces_and_stress, model, pl, test_atoms, torch):
+    torch.manual_seed(7)
+    _A = torch.randn(3, 3)
+    _Q, _ = torch.linalg.qr(_A)
+    if torch.det(_Q) < 0:
+        _Q[:, 0] *= -1
+    _R_np = _Q.numpy()
+
+    _rot = test_atoms[0].copy()
+    _rot.set_cell(test_atoms[0].cell.array @ _R_np.T, scale_atoms=False)
+    _rot.set_positions(test_atoms[0].positions @ _R_np.T)
+
+    _g_orig = build_graph(test_atoms[0], cutoff=4.0, dtype=torch.float32)
+    _g_rot = build_graph(_rot, cutoff=4.0, dtype=torch.float32)
+    _E_a, _F_a, _s_a = compute_forces_and_stress(model, _g_orig)
+    _E_b, _F_b, _s_b = compute_forces_and_stress(model, _g_rot)
+
+    _R_t = torch.as_tensor(_R_np, dtype=_F_a.dtype)
+    _e_err = (_E_b - _E_a).abs().item()
+    _f_err = (_F_b - _F_a @ _R_t.T).abs().max().item()
+    _s_err = (_s_b - _R_t @ _s_a @ _R_t.T).abs().max().item()
+
+    pl.DataFrame(
+        {
+            "identity": [
+                "scalar:  E(rot) = E",
+                "vector:  F(rot) = F · Rᵀ",
+                "tensor:  σ(rot) = R · σ · Rᵀ",
+            ],
+            "max abs error": [
+                f"{_e_err:.3e}",
+                f"{_f_err:.3e}",
+                f"{_s_err:.3e}",
+            ],
+            "interpretation": [
+                "expect ≈ 0  (energy is rotation-invariant)",
+                "expect ≈ 0  (forces transform as vectors)",
+                "expect ≈ 0  (stress transforms as a rank-2 tensor)",
+            ],
+        }
+    )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## What we built, and where to go from here
+
+    **What we did.** Took the equivariant message-passing model from nb05
+    to periodic crystals. We:
+
+    - Added integer lattice shifts `S` to every edge so graphs can cross
+      the unit-cell boundary.
+    - Recomputed `edge_vec = pos[j] − pos[i] + S · cell` *inside* each
+      interaction layer so the cell tensor is part of the autograd graph.
+    - Derived stress from the same learned energy via the strain trick
+      σ = (1/V) ∂E/∂ε — one extra backward pass on a different leaf.
+    - Trained on 800 synthetic FCC-Cu snapshots labeled by ASE's EMT,
+      combining per-atom energy MAE, force MAE, and stress MAE in the
+      loss. The training/loss/eval code is **the same code path** nb05
+      used — just with `w_σ > 0`.
+
+    **What we deliberately skipped.**
+
+    - **Long-range Coulomb / Ewald sums.** Cu is metallic; EMT is
+      short-ranged. Ionic crystals like NaCl would need Ewald.
+    - **Real DFT labels.** We used a classical many-body potential as
+      ground-truth; in real research labels come from DFT (MP-traj,
+      GAP-18 Si, OC20 catalysis, …).
+    - **NPT molecular dynamics with the trained potential.** The trained
+      model is a drop-in ASE calculator candidate; running a barostat
+      with it is a natural next step but out of scope here.
+    - **Multi-species crystals.** Single-element Cu keeps the data layer
+      identical to nb04/nb05.
+
+    **Where to go from here.** Production equivariant MLIPs use the
+    [e3nn](https://e3nn.org) library for higher-order tensor
+    representations (NequIP, MACE, Allegro). Multi-element datasets at
+    scale: MPtraj, OC20, ANI-1x. For end-to-end demos including NPT MD,
+    see the ASE + MACE tutorials.
+    """)
     return
 
 

@@ -54,7 +54,9 @@ known-first-party = ["tinymlip"]
 # N803: marimo's generated cell signatures inject imported names (e.g. class
 # names like `InvariantInteraction`) as function arguments — the casing is
 # inherited from the import, not chosen by us.
-"notebooks/*.py" = ["B018", "N803"]
+# N806: cells use uppercase scalars (E, F, R, Q, V) by physics convention;
+# lowercase would obscure the math we are teaching.
+"notebooks/*.py" = ["B018", "N803", "N806"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
