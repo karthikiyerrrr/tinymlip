@@ -146,6 +146,21 @@ def _(mo):
     wrong distance and the wrong direction. The plot below shows the central
     cell (solid) and its 8 in-plane image cells (faded); orange edges connect
     to a neighbor in a non-zero image (`S ≠ 0`).
+
+    **What the plot does and doesn't show.** The visualization filters to
+    edges with `S_z = 0` for clarity; the full PBC graph also has edges
+    connecting through the top and bottom faces. An atom can also interact
+    with *its own image* in an adjacent cell — `S = (1, 0, 0)` on a boundary
+    atom produces an edge from the atom to itself, displaced by `+a₁`. This
+    is a real PBC effect, not a bug.
+
+    **Cutoff vs. cell size (minimum-image convention).** MD codes typically
+    enforce `cutoff < L/2` so an atom can't feel multiple images of the same
+    physical neighbor. Our single-cell `a ≈ 3.6 Å` puts `L/2 ≈ 1.8 Å` against
+    the default cutoff `4.0 Å`, so we are *deliberately above* that limit —
+    the neighbor list still handles it correctly per-edge via `shift_idx`
+    (each image is a distinct edge), but in production you'd use a larger
+    supercell or a tighter cutoff.
     """)
     return
 
@@ -296,25 +311,67 @@ def _(mo):
     ## The strain trick: stress from a single backward pass
 
     **Stress is the response of energy to a small deformation of the cell.**
-    Parameterize the deformation as a symmetric 3×3 strain tensor `ε`. Atomic
-    positions deform as `r → r·(I + ε)` and the cell as `c → c·(I + ε)`. The
-    determinant of `I + ε` is `1 + tr(ε) + O(ε²)`, so a uniform isotropic
-    strain is just a volumetric scaling — exactly what the `a` slider above
-    does, in disguise.
+    This is the **thermodynamic definition of Cauchy stress**:
+    `σ_ij = ∂W/∂ε_ij` with strain energy density `W = E/V`. Stress is the
+    conjugate variable to strain in the elastic free energy, the same way
+    force is the conjugate to position. It is *not* a trick — it is the
+    definition you'd find in any continuum-mechanics text. What is new here
+    is only that we can take that derivative *by autograd* against the
+    learned energy.
 
-    **Stress is then `σ = (1/V) · ∂E/∂ε`,** evaluated at `ε = 0`. If `ε` is a
-    leaf in the autograd graph, σ falls out of one extra backward pass — the
-    same trick that gave us forces from `−∂E/∂r` back in nb03. We get a
+    Parameterize the deformation as a **symmetric** 3×3 strain tensor `ε`.
+    Atomic positions deform as `r → r·(I + ε)` and the cell as
+    `c → c·(I + ε)`. The determinant of `I + ε` is `1 + tr(ε) + O(ε²)`, so a
+    uniform isotropic strain is just a volumetric scaling — exactly what the
+    `a` slider above does, in disguise.
+
+    **Why ε is symmetric.** The antisymmetric part of an infinitesimal
+    deformation is an infinitesimal rotation — energy is rotation-invariant
+    (nb05's whole point), so the antisymmetric channel can't carry any
+    signal. Symmetrizing ε projects out a gauge degree of freedom rather
+    than imposing a physical constraint. (Engineering codes ship stress as
+    the Voigt 6-vector `(σ_11, σ_22, σ_33, σ_23, σ_13, σ_12)`; ASE's
+    `get_stress(voigt=False)` is named *false* because it returns the full
+    3×3 we use here.)
+
+    **Stress is then `σ = (1/V) · ∂E/∂ε`,** evaluated at `ε = 0`. If `ε` is
+    a leaf in the autograd graph, σ falls out of one extra backward pass —
+    the same trick that gave us forces from `−∂E/∂r` back in nb03. We get a
     rank-2 tensor instead of a vector, but the principle is identical.
 
-    **Critical implementation detail.** For this to actually work, every layer
-    must recompute `edge_vec` from `pos[j] - pos[i] + S @ cell` *inside* its
-    forward pass — not from a cached `edge_vec` field on the graph. Otherwise
-    the strain is applied to `pos` and `cell` but the model's edges still
-    point in the un-strained directions, and σ comes out as zeros. Our
-    `InvariantInteraction` and `EquivariantInteraction` both do the recompute
-    (see `layers.py`); the next cell verifies σ against a hand-rolled
+    **Sign convention.** `F = −∂E/∂r` carries a minus (force points downhill
+    in energy); `σ = +(1/V) ∂E/∂ε` does not. This is not an inconsistency —
+    it is the standard tension-positive Cauchy convention: positive `σ_xx`
+    means the lattice is under tensile load in `x`. ASE uses the same
+    convention, which is why predicted and reference σ line up later
+    without any sign flip.
+
+    **One scalar, three observables, one rule.** Energy is the leaf of the
+    model; every physical quantity is a derivative of `E` against the right
+    upstream leaf. nb03's rule was: `pos` must be the leaf, not a cached
+    `edge_vec`, so `∂E/∂pos` actually flows. nb06's rule is the same in
+    different coin: the **cell tensor** must be in the autograd graph, not
+    bypassed by a cached `edge_vec`, so `∂E/∂cell` actually flows. Same
+    trick, different leaf. Our `InvariantInteraction` and
+    `EquivariantInteraction` both recompute
+    `edge_vec = pos[j] − pos[i] + S · cell` *inside* the forward pass for
+    exactly this reason; the next cell verifies σ against a hand-rolled
     numerical derivative to confirm.
+
+    <details>
+    <summary><b>Try this:</b> what does σ come out as if you skip the
+    <code>pos + S @ cell</code> recompute inside
+    <code>EquivariantInteraction.forward</code>?</summary>
+
+    σ collapses to ~0 to machine precision, because the cell tensor never
+    enters the autograd graph and `∂E/∂ε` is identically zero at the leaf.
+    Concretely: comment out the `if graph.shift_idx is not None: ...` re-add
+    block in `layers.EquivariantInteraction.forward` (and the matching one
+    in `InvariantInteraction.forward`), rerun the parity cell below, and
+    the autograd σ row in the table reads all zeros. The numerical σ row
+    is unchanged — finite-differencing the forward pass doesn't need the
+    cell to be a leaf.
+    </details>
     """)
     return
 
@@ -407,17 +464,28 @@ def _(
 def _(mo):
     mo.md(r"""
     **Parity confirmed.** Autograd σ matches a central finite-difference of
-    the energy under a symmetrized hand-built strain to roughly 1e-8. This is
-    the same principle as the force parity check in nb03 — energy is the
+    the energy under a symmetrized hand-built strain to roughly 1e-8. This
+    is the same principle as the force parity check in nb03 — energy is the
     single learned scalar, every other physical quantity is a derivative of
     it against a different leaf (positions → forces, cell strain → stress).
 
+    The strain trick is numerically *exact*: this fp64 parity confirms the
+    autograd derivation to ~1e-8. The fp32 arithmetic of the trained model
+    in later sections loses some precision in its own internal ops, but
+    that is unrelated — the `σ = (1/V) ∂E/∂ε` identity itself stays
+    bit-accurate at whatever precision the model runs in.
+
+    We use a small `EquivariantMPNN(n_layers=2, hidden_dim=16)` here just to
+    make the parity check fast; the trained model later uses a larger
+    configuration. Parity is about the autograd machinery, not the trained
+    weights — random weights work fine, and smaller is faster.
+
     The diagonal entries above are the **normal stresses** (eV/Å³); the
-    off-diagonals are **shears**. On a perfectly equilibrated lattice all six
-    independent entries would be zero, but our untrained model has random
-    weights and the lattice is slightly rattled, so non-zero values are
-    expected. After training (section 5) the entries should track ASE's EMT
-    σ to within the test-set MAE.
+    off-diagonals are **shears**. On a perfectly equilibrated lattice all
+    six independent entries would be zero, but our untrained model has
+    random weights and the lattice is slightly rattled, so non-zero values
+    are expected. After training the entries should track ASE's EMT σ to
+    within the test-set MAE.
     """)
     return
 
@@ -430,10 +498,17 @@ def _(mo):
     We need labeled data to train against. **ASE ships an EMT
     (Effective Medium Theory) calculator** that works on FCC metals
     — Cu, Al, Ni, Pd, Ag, Pt, Au — and produces energy, forces, **and**
-    stress for free in physical units (eV, eV/Å, eV/Å³). It is fast,
-    differentiable-by-finite-difference, and roughly captures the right
-    cohesive physics for these metals. We treat it as our "ground truth"
-    surrogate; in actual research these labels would come from DFT.
+    stress for free in physical units (eV, eV/Å, eV/Å³).
+
+    EMT is an embedded-atom-method-style classical potential — each atom's
+    energy depends on the *electron density* it sees from its neighbors.
+    Jacobsen, Stoltze, and Nørskov (1996) parameterized it against DFT
+    cohesive properties of those seven FCC metals: it captures the right
+    elastic constants, lattice constants, and vacancy energies to within
+    ~10% of DFT, fast enough that ASE ships it as a built-in. We use it
+    because it's calibrated and fast, not because it's mysterious. In
+    production you'd swap EMT for GAP / DFT / OC20 labels — and nothing
+    else in this notebook would change.
 
     The dataset we generate below contains 800 snapshots of a 2×2×2 FCC Cu
     supercell (32 atoms), rattled and strained around the equilibrium
@@ -545,14 +620,19 @@ def _(mo):
     - `w_F = 100` — force components are ~eV/Å magnitude; an MAE of 10 meV/Å
       is excellent, and a unit weight would let the energy MAE dominate.
       The factor of 100 brings the force MAE up to a comparable contribution.
-    - `w_σ = 10` — stress components are ~meV/Å³ magnitude (much smaller than
-      forces in absolute units); a coefficient of 10 is enough to make the
-      stress term visible but not dominant. Setting `w_σ = 0` recovers the
-      nb05 loss exactly.
+    - `w_σ = 10` — stress components are ~meV/Å³ magnitude (much smaller
+      than forces in absolute units); a coefficient of 10 is enough to make
+      the stress term visible but not dominant. Setting `w_σ = 0` recovers
+      the nb05 loss exactly.
 
-    `fit_atomic_reference` removes the per-element baseline so the model only
-    has to learn the *deviation* from the average per-atom energy — a free
-    win that we've used since nb04.
+    `fit_atomic_reference` removes the per-element baseline so the model
+    only has to learn the *deviation* from the average per-atom energy — a
+    free win that we've used since nb04.
+
+    **Knob inventory.** The slider row exposes `w_σ`, `n_epochs`, and
+    `hidden_dim`. `n_layers = 3`, `num_basis = 20`, and `cutoff = 4.0 Å`
+    are pinned to values that fit the 5-minute CPU budget for `tiny`; the
+    `small` / `default` configs in `configs/` widen them.
     """)
     return
 
@@ -694,8 +774,6 @@ def _(
         w_f=100.0,
         w_s=w_s_slider.value,
     )
-    # n_atoms per snapshot is constant for this dataset, so per-atom energy MAE
-    # is well-defined. Convert all to meV (or meV/Å, meV/Å³) for readability.
     _n_atoms_per_snap = test_atoms[0].get_global_number_of_atoms()
 
     mo.vstack(
@@ -719,6 +797,17 @@ def _(
                     ],
                 }
             ),
+            mo.md(
+                r"""
+    **Are these numbers good?** On FCC-metal MLIPs trained at scale, ~1 meV/Å
+    force MAE is near-SOTA; on this small synthetic dataset, 5–20 meV/Å is
+    typical and the DFT–DFT spread across functionals is itself ~5 meV/Å. For
+    stress, the conversion `1 eV/Å³ ≈ 160 GPa` makes `5 meV/Å³` MAE ≈ 1 GPa —
+    in the same ballpark as the DFT-DFT functional spread. A few meV/atom on
+    energy is the standard ambition; 1 meV/atom is the target on real
+    materials datasets.
+                """
+            ),
         ]
     )
     return
@@ -731,17 +820,18 @@ def _(mo):
 
     Three sanity checks on the **test set** (snapshots the model never saw):
 
-    1. **Extensivity** — replicate a snapshot, energy should double and stress
-       should stay the same.
-    2. **E–V curve** — predicted E(V) under isotropic volumetric strain should
-       track ASE's EMT reference.
-    3. **Rotation equivariance** — under a random proper rotation `R`, energy
-       should be invariant, forces should rotate as `F → F·Rᵀ`, and stress
-       should rotate as `σ → R σ Rᵀ`.
+    1. **Extensivity** — replicate a snapshot, energy should double and
+       stress should stay the same.
+    2. **E–V curve** — predicted E(V) under isotropic volumetric strain
+       should track ASE's EMT reference.
+    3. **Rotation equivariance** — under a random proper rotation `R`,
+       energy should be invariant, forces should rotate as `F → F·Rᵀ`, and
+       stress should rotate as `σ → R σ Rᵀ`.
 
-    Tolerances here are looser than in the unit-test suite (~1e-4 vs 1e-6)
-    because we are running the trained `fp32` model rather than the
-    bit-exact `fp64` test fixture — but the same identities hold.
+    fp32 has roughly seven digits of precision, so a 1e-4 max-error on the
+    rotation identities below is at the noise floor for a model with
+    O(10⁴) accumulated ops per atom — same identities, just measured
+    against the fp32 floor instead of fp64.
     """)
     return
 
@@ -848,23 +938,33 @@ def _(mo):
 
     Two things you should see, and what they tell you:
 
-    1. **Both wells are parabolic-ish** with a clear minimum. Good —
-       the model has learned the qualitative cohesive behavior of FCC
-       Cu (compression hurts, expansion hurts, equilibrium in
-       between).
+    1. **Both wells are parabolic-ish** with a clear minimum. Good — the
+       model has learned the qualitative cohesive behavior of FCC Cu
+       (compression hurts, expansion hurts, equilibrium in between).
     2. **The model's minimum may sit at slightly larger volume than
-       EMT's**, and the model's curvature may be softer than EMT's.
-       This is a real generalization error: our training data was
-       concentrated near equilibrium (`strain_range=0.05`,
-       `rattle_amp=0.1`), so the model has limited signal on the
-       deeper-compression tail where the curves diverge most. Longer
-       training, wider strain sampling, or a stronger energy weight
-       would tighten the well.
+       EMT's**, and the model's curvature may be softer than EMT's. This
+       is a real generalization error: our training data was concentrated
+       near equilibrium (`strain_range=0.05`, `rattle_amp=0.1`), so the
+       model has limited signal on the deeper-compression tail where the
+       curves diverge most. Longer training, wider strain sampling, or a
+       stronger energy weight would tighten the well.
+
+    **What this curve encodes.** A materials scientist looking at an E(V)
+    plot immediately wants `B = V · ∂²E/∂V²` at the minimum — the **bulk
+    modulus**, a fundamental measurable property of any solid. EMT Cu's
+    B ≈ 134 GPa; DFT Cu ≈ 140 GPa; experimental ≈ 137 GPa. The trained
+    MLIP gives you the full anisotropic elastic-constant tensor `C_ij` for
+    free: they are second derivatives of `E` with respect to strain, and
+    we already wired up the first derivative (σ). One more backward pass
+    (or finite-differencing σ vs. ε) yields the full `C_ij` — for cubic
+    FCC Cu, `C_11 ≈ 175 GPa`, `C_12 ≈ 130 GPa`, `C_44 ≈ 82 GPa`. *E(V) →
+    B; σ vs. ε → C_ij.* The parity-check plot is also a property-
+    prediction plot.
 
     For a teaching demo, this is exactly the lesson: a trained MLIP
     interpolates well in the regime it saw, and extrapolates with
-    increasing error outside it. A bigger dataset and more epochs
-    would close this gap; a fundamentally bigger gap would point at a
+    increasing error outside it. A bigger dataset and more epochs would
+    close the well-shape gap; a fundamentally bigger gap would point at a
     capacity or featurization problem instead.
     """)
     return
@@ -934,6 +1034,23 @@ def _(mo):
     mo.md(r"""
     ## What we built, and where to go from here
 
+    **The MLIP framework, in one sentence.** A neural network learns one
+    scalar function `E(positions, cell, species)`. Every physical quantity
+    is a derivative of it against the right leaf:
+
+    - position → forces (nb03)
+    - strain → stress (nb06)
+    - composition → chemical potential
+    - electric field → dipole / polarizability
+
+    Every "new" quantity is a new autograd call, not a new model. The
+    conservative-by-construction property (no separate force head, no
+    separate stress head) is what makes MLIPs work in molecular dynamics:
+    the trained potential exactly conserves energy in NVE, exactly
+    satisfies the virial theorem in NVT, and exactly respects the
+    stress–strain identity in NPT — because all those identities follow
+    from a *single* `E` being the source of every observable.
+
     **What we did.** Took the equivariant message-passing model from nb05
     to periodic crystals. We:
 
@@ -942,11 +1059,23 @@ def _(mo):
     - Recomputed `edge_vec = pos[j] − pos[i] + S · cell` *inside* each
       interaction layer so the cell tensor is part of the autograd graph.
     - Derived stress from the same learned energy via the strain trick
-      σ = (1/V) ∂E/∂ε — one extra backward pass on a different leaf.
+      `σ = (1/V) ∂E/∂ε` — one extra backward pass on a different leaf.
     - Trained on 800 synthetic FCC-Cu snapshots labeled by ASE's EMT,
       combining per-atom energy MAE, force MAE, and stress MAE in the
-      loss. The training/loss/eval code is **the same code path** nb05
-      used — just with `w_σ > 0`.
+      loss. The training / loss / eval code is **the same code path**
+      nb05 used — just with `w_σ > 0`. Setting `w_σ = 0` recovers nb05's
+      loss exactly: one training loop, every observable, one weight knob.
+
+    **Architecture vs. dataset.** The architecture has **no FCC assumption
+    baked in.** The same `EquivariantMPNN` + PBC machinery would train on
+    rattled BCC Fe, diamond Si, rutile TiO₂, or a Pt/MOF interface — swap
+    the `Atoms` generator and the labeler; nothing in `models.py` /
+    `layers.py` / `forces.py` changes. What this *dataset* doesn't cover
+    and would therefore predict badly on: vacancies, surfaces, grain
+    boundaries, phase transitions (FCC↔HCP), other compositions. Our
+    32-atom rattled supercell covers the harmonic well around equilibrium
+    FCC and nothing else. **MLIP quality is dataset-bounded, not
+    architecture-bounded.**
 
     **What we deliberately skipped.**
 
@@ -963,9 +1092,11 @@ def _(mo):
 
     **Where to go from here.** Production equivariant MLIPs use the
     [e3nn](https://e3nn.org) library for higher-order tensor
-    representations (NequIP, MACE, Allegro). Multi-element datasets at
-    scale: MPtraj, OC20, ANI-1x. For end-to-end demos including NPT MD,
-    see the ASE + MACE tutorials.
+    representations (NequIP, MACE, Allegro). Datasets matched to nb06's
+    PBC framing: **MPtraj** and **OC20** (both crystal-scale). Datasets
+    matched to nb05's molecular framing: **ANI-1x** and **SPICE**.
+    e3nn-based NequIP / MACE / Allegro work in both regimes. For end-to-
+    end demos including NPT MD, see the ASE + MACE tutorials.
     """)
     return
 
