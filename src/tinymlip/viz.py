@@ -13,7 +13,7 @@ import plotly.graph_objects as go
 import torch
 from ase.data import chemical_symbols, covalent_radii
 
-from tinymlip.graph import AtomGraph
+from tinymlip.graph import AtomGraph, build_graph
 
 # CPK-ish hex palette for the elements rMD17 actually contains
 # (H, C, N, O, F, S, Cl) — anything else falls back to a neutral grey.
@@ -312,3 +312,66 @@ def graph_stats_md(graph: AtomGraph) -> str:
         f"**max** = {max_deg}   "
         f"**min** = {min_deg}"
     )
+
+
+def e_v_curve(
+    model,
+    base_atoms,
+    volume_fractions,
+    *,
+    reference_energies=None,
+) -> go.Figure:
+    """Predicted (and optionally reference) energy vs volume curve.
+
+    For each fraction `f` in `volume_fractions`, isotropically scale the cell
+    and positions so V = f * V0, forward through the model, and plot E(V).
+    If `reference_energies` is provided (same length as volume_fractions),
+    add a second trace for the reference values (e.g. ASE EMT).
+
+    Args:
+        model:              callable, model(graph) -> energy.
+        base_atoms:         ASE Atoms at the reference volume V0.
+        volume_fractions:   iterable of float multipliers around 1.0.
+        reference_energies: optional list of reference energies, one per
+                            volume fraction; if given, plotted as a second
+                            trace labeled 'EMT reference'.
+
+    Returns:
+        plotly.graph_objects.Figure with predicted (and reference) E(V).
+    """
+    cutoff = getattr(model, "cutoff", None)
+    if cutoff is None:
+        cutoff = float(model.interactions[0].basis.cutoff)
+
+    v0 = base_atoms.get_volume()
+    volumes: list[float] = []
+    energies_pred: list[float] = []
+    dtype = next(model.parameters()).dtype
+    for f in volume_fractions:
+        scale = float(f) ** (1.0 / 3.0)
+        atoms = base_atoms.copy()
+        atoms.set_cell(base_atoms.cell.array * scale, scale_atoms=True)
+        g = build_graph(atoms, cutoff=cutoff, dtype=dtype)
+        with torch.no_grad():
+            out = model(g)
+            energy = float(out.item() if out.ndim == 0 else out.sum().item())
+        volumes.append(atoms.get_volume())
+        energies_pred.append(energy)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=volumes, y=energies_pred, mode="lines+markers", name="model"))
+    if reference_energies is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=volumes,
+                y=list(reference_energies),
+                mode="lines+markers",
+                name="EMT reference",
+            )
+        )
+    fig.update_layout(
+        xaxis_title="V (Å³)",
+        yaxis_title="E (eV)",
+        title=f"E–V curve around V₀ = {v0:.2f} Å³",
+    )
+    return fig
