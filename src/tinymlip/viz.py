@@ -8,10 +8,14 @@ across notebooks and easy to smoke-test.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import numpy as np
 import plotly.graph_objects as go
 import torch
+from ase import Atoms
 from ase.data import chemical_symbols, covalent_radii
+from torch import nn
 
 from tinymlip.graph import AtomGraph, build_graph
 
@@ -315,11 +319,11 @@ def graph_stats_md(graph: AtomGraph) -> str:
 
 
 def e_v_curve(
-    model,
-    base_atoms,
-    volume_fractions,
+    model: nn.Module,
+    base_atoms: Atoms,
+    volume_fractions: Iterable[float],
     *,
-    reference_energies=None,
+    reference_energies: Iterable[float] | None = None,
 ) -> go.Figure:
     """Predicted (and optionally reference) energy vs volume curve.
 
