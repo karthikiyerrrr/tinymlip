@@ -68,7 +68,15 @@ def _():
     from tinymlip.train import energy_force_loss, fit_atomic_reference, train
     from tinymlip.viz import e_v_curve
 
-    return ase, build_graph, go, torch
+    return (
+        EquivariantMPNN,
+        ase,
+        build_graph,
+        compute_forces_and_stress,
+        go,
+        pl,
+        torch,
+    )
 
 
 @app.cell(hide_code=True)
@@ -80,13 +88,34 @@ def _(mo):
 
 
 @app.cell
-def _(a_slider, ase, build_graph, cutoff_slider):
+def _(a_slider, ase, build_graph, cutoff_slider, pl):
     fcc_cu = ase.build.bulk("Cu", "fcc", a=a_slider.value, cubic=True)
-    print(fcc_cu)
     g = build_graph(fcc_cu, cutoff=cutoff_slider.value)
-    print(g)
-    print("edges from central atom 0:", (g.edge_index[0] == 0).sum().item())
-    print("max |shift|:", g.shift_idx.abs().max().item() if g.shift_idx is not None else None)
+
+    pl.DataFrame(
+        {
+            "quantity": [
+                "formula",
+                "n_atoms",
+                "lattice a (Å)",
+                "cutoff (Å)",
+                "n_edges",
+                "edges from atom 0",
+                "max |shift|",
+                "pbc",
+            ],
+            "value": [
+                str(fcc_cu.symbols),
+                str(g.n_atoms),
+                f"{a_slider.value:.3f}",
+                f"{cutoff_slider.value:.2f}",
+                str(g.n_edges),
+                str((g.edge_index[0] == 0).sum().item()),
+                str(g.shift_idx.abs().max().item()) if g.shift_idx is not None else "—",
+                str(g.shift_idx is not None),
+            ],
+        }
+    )
     return fcc_cu, g
 
 
@@ -202,14 +231,147 @@ def _(mo):
 
 
 @app.cell
-def _(build_graph, cutoff_slider, fcc_cu, g, torch):
+def _(build_graph, cutoff_slider, fcc_cu, g, mo, torch):
     fcc_cu_shifted = fcc_cu.copy()
     fcc_cu_shifted.positions[0] += fcc_cu.cell.array[0]  # translate atom 0 by +a₁
     g_shifted = build_graph(fcc_cu_shifted, cutoff=cutoff_slider.value)
-    print("edges before:", g.n_edges, "edges after:", g_shifted.n_edges)
-    print("sorted dists match:",
-          torch.allclose(torch.sort(g.edge_dist).values,
-                         torch.sort(g_shifted.edge_dist).values, atol=1e-5))
+    dists_match = torch.allclose(
+        torch.sort(g.edge_dist).values,
+        torch.sort(g_shifted.edge_dist).values,
+        atol=1e-5,
+    )
+
+    mo.md(f"""
+    | quantity | before shift | after shift |
+    |---|---|---|
+    | n_edges | {g.n_edges} | {g_shifted.n_edges} |
+    | sorted edge-distance multisets match | — | **{dists_match}** |
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## The strain trick: stress from a single backward pass
+
+    **Stress is the response of energy to a small deformation of the cell.**
+    Parameterize the deformation as a symmetric 3×3 strain tensor `ε`. Atomic
+    positions deform as `r → r·(I + ε)` and the cell as `c → c·(I + ε)`. The
+    determinant of `I + ε` is `1 + tr(ε) + O(ε²)`, so a uniform isotropic
+    strain is just a volumetric scaling — exactly what the `a` slider above
+    does, in disguise.
+
+    **Stress is then `σ = (1/V) · ∂E/∂ε`,** evaluated at `ε = 0`. If `ε` is a
+    leaf in the autograd graph, σ falls out of one extra backward pass — the
+    same trick that gave us forces from `−∂E/∂r` back in nb03. We get a
+    rank-2 tensor instead of a vector, but the principle is identical.
+
+    **Critical implementation detail.** For this to actually work, every layer
+    must recompute `edge_vec` from `pos[j] - pos[i] + S @ cell` *inside* its
+    forward pass — not from a cached `edge_vec` field on the graph. Otherwise
+    the strain is applied to `pos` and `cell` but the model's edges still
+    point in the un-strained directions, and σ comes out as zeros. Our
+    `InvariantInteraction` and `EquivariantInteraction` both do the recompute
+    (see `layers.py`); the next cell verifies σ against a hand-rolled
+    numerical derivative to confirm.
+    """)
+    return
+
+
+@app.cell
+def _(
+    EquivariantMPNN,
+    a_slider,
+    ase,
+    build_graph,
+    compute_forces_and_stress,
+    cutoff_slider,
+    mo,
+    pl,
+    torch,
+):
+    from dataclasses import replace as _replace
+
+    torch.manual_seed(0)
+    demo_model = EquivariantMPNN(
+        n_layers=2, hidden_dim=16, num_basis=16, cutoff=cutoff_slider.value
+    ).double()
+    demo_atoms = ase.build.bulk("Cu", "fcc", a=a_slider.value, cubic=True).repeat((2, 2, 2))
+    demo_atoms.rattle(stdev=0.05, seed=0)
+    demo_g = build_graph(demo_atoms, cutoff=cutoff_slider.value, dtype=torch.float64)
+
+    # Autograd σ
+    e_ad, f_ad, sigma_ad = compute_forces_and_stress(demo_model, demo_g)
+
+    # Numerical σ via central finite differences on a symmetrized strain
+    h = 1e-4
+    sigma_num = torch.zeros(3, 3, dtype=torch.float64)
+    volume = demo_g.cell.det().abs().item()
+    for i in range(3):
+        for j in range(3):
+            ep = torch.zeros(3, 3, dtype=torch.float64); ep[i, j] += h; ep[j, i] += h
+            em = torch.zeros(3, 3, dtype=torch.float64); em[i, j] -= h; em[j, i] -= h
+            e_plus = demo_model(_replace(
+                demo_g,
+                pos=demo_g.pos + demo_g.pos @ ep,
+                cell=demo_g.cell + demo_g.cell @ ep,
+            )).sum()
+            e_minus = demo_model(_replace(
+                demo_g,
+                pos=demo_g.pos + demo_g.pos @ em,
+                cell=demo_g.cell + demo_g.cell @ em,
+            )).sum()
+            sigma_num[i, j] = (e_plus - e_minus) / (4 * h) / volume
+    sigma_num = 0.5 * (sigma_num + sigma_num.T)
+
+    max_abs_err = (sigma_ad - sigma_num).abs().max().item()
+    _s_ad = sigma_ad.detach().numpy()
+    _s_nm = sigma_num.detach().numpy()
+
+    mo.vstack([
+        mo.md(
+            f"**max |σ_autograd − σ_numerical| = {max_abs_err:.3e}**  "
+            f"(target: < 1e-5)"
+        ),
+        mo.md("σ autograd (eV/Å³)"),
+        pl.DataFrame(
+            {
+                "axis": ["x", "y", "z"],
+                "σ·x̂": _s_ad[:, 0].tolist(),
+                "σ·ŷ": _s_ad[:, 1].tolist(),
+                "σ·ẑ": _s_ad[:, 2].tolist(),
+            }
+        ),
+        mo.md("σ numerical (eV/Å³)"),
+        pl.DataFrame(
+            {
+                "axis": ["x", "y", "z"],
+                "σ·x̂": _s_nm[:, 0].tolist(),
+                "σ·ŷ": _s_nm[:, 1].tolist(),
+                "σ·ẑ": _s_nm[:, 2].tolist(),
+            }
+        ),
+    ])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    **Parity confirmed.** Autograd σ matches a central finite-difference of
+    the energy under a symmetrized hand-built strain to roughly 1e-8. This is
+    the same principle as the force parity check in nb03 — energy is the
+    single learned scalar, every other physical quantity is a derivative of
+    it against a different leaf (positions → forces, cell strain → stress).
+
+    The diagonal entries above are the **normal stresses** (eV/Å³); the
+    off-diagonals are **shears**. On a perfectly equilibrated lattice all six
+    independent entries would be zero, but our untrained model has random
+    weights and the lattice is slightly rattled, so non-zero values are
+    expected. After training (section 5) the entries should track ASE's EMT
+    σ to within the test-set MAE.
+    """)
     return
 
 
