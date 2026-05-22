@@ -69,11 +69,13 @@ def _():
     from tinymlip.viz import e_v_curve
 
     return (
+        EMT,
         EquivariantMPNN,
         ase,
         build_graph,
         compute_forces_and_stress,
         go,
+        load_cu_emt,
         pl,
         torch,
     )
@@ -372,6 +374,106 @@ def _(mo):
     expected. After training (section 5) the entries should track ASE's EMT
     σ to within the test-set MAE.
     """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Where the labels come from
+
+    We need labeled data to train against. **ASE ships an EMT
+    (Effective Medium Theory) calculator** that works on FCC metals
+    — Cu, Al, Ni, Pd, Ag, Pt, Au — and produces energy, forces, **and**
+    stress for free in physical units (eV, eV/Å, eV/Å³). It is fast,
+    differentiable-by-finite-difference, and roughly captures the right
+    cohesive physics for these metals. We treat it as our "ground truth"
+    surrogate; in actual research these labels would come from DFT.
+
+    The dataset we generate below contains 800 snapshots of a 2×2×2 FCC Cu
+    supercell (32 atoms), rattled and strained around the equilibrium
+    lattice constant. Each snapshot carries an EMT-computed (E, F, σ)
+    triple. We use this to train the equivariant model in the next
+    section.
+    """)
+    return
+
+
+@app.cell
+def _(EMT, ase, mo, pl):
+    snap = ase.build.bulk("Cu", "fcc", a=3.615, cubic=True).repeat((2, 2, 2))
+    snap.rattle(stdev=0.05, seed=42)
+    snap.calc = EMT()
+    snap_E = snap.get_potential_energy()
+    snap_F = snap.get_forces()
+    snap_sigma = snap.get_stress(voigt=False)
+
+    mo.vstack([
+        mo.md("**Single EMT snapshot:** 2×2×2 FCC Cu (32 atoms), rattle stdev=0.05 Å"),
+        pl.DataFrame(
+            {
+                "quantity": [
+                    "total energy (eV)",
+                    "per-atom energy (eV)",
+                    "|F|_max (eV/Å)",
+                    "|F|_mean (eV/Å)",
+                    "tr(σ)/3 = pressure (eV/Å³)",
+                ],
+                "value": [
+                    f"{snap_E:.4f}",
+                    f"{snap_E / len(snap):.4f}",
+                    f"{abs(snap_F).max():.3f}",
+                    f"{abs(snap_F).mean():.3f}",
+                    f"{snap_sigma.trace() / 3:.4e}",
+                ],
+            }
+        ),
+        mo.md("σ (eV/Å³)"),
+        pl.DataFrame(
+            {
+                "axis": ["x", "y", "z"],
+                "σ·x̂": snap_sigma[:, 0].tolist(),
+                "σ·ŷ": snap_sigma[:, 1].tolist(),
+                "σ·ẑ": snap_sigma[:, 2].tolist(),
+            }
+        ),
+    ])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ### Generate (or load from cache) the 800-snapshot Cu/EMT dataset
+
+    Each snapshot is a 2×2×2 FCC Cu supercell (32 atoms) with: an isotropic
+    volumetric strain drawn from ±5%, a small shear (±2%), and Gaussian
+    rattle of 0.1 Å on each Cartesian coordinate. EMT labels (E, F, σ) are
+    computed on each snapshot and the whole bundle is cached to disk as
+    an extxyz file so re-running this cell is instant.
+    """)
+    return
+
+
+@app.cell
+def _(load_cu_emt, mo):
+    import time
+
+    t0 = time.time()
+    meta, all_atoms = load_cu_emt(
+        n_snapshots=800,
+        supercell=(2, 2, 2),
+        rattle_amp=0.1,
+        strain_range=0.05,
+        shear_range=0.02,
+        seed=0,
+    )
+    elapsed = time.time() - t0
+
+    mo.vstack([
+        mo.md(f"Generated/loaded **{len(all_atoms)}** snapshots in **{elapsed:.1f} s**"),
+        meta.head(),
+    ])
     return
 
 
