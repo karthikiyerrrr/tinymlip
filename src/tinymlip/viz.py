@@ -324,6 +324,7 @@ def e_v_curve(
     volume_fractions: Iterable[float],
     *,
     reference_energies: Iterable[float] | None = None,
+    shifts: dict[int, float] | None = None,
 ) -> go.Figure:
     """Predicted (and optionally reference) energy vs volume curve.
 
@@ -339,6 +340,15 @@ def e_v_curve(
         reference_energies: optional list of reference energies, one per
                             volume fraction; if given, plotted as a second
                             trace labeled 'EMT reference'.
+        shifts:             optional per-element reference shifts
+                            ({Z: eV/atom}) as returned by
+                            `train.fit_atomic_reference`. When the model was
+                            trained with shifts, its forward pass predicts the
+                            residual `E_true - Σ shifts[z_i]`; adding the
+                            shifts back here yields a total energy directly
+                            comparable to `reference_energies`. Without this
+                            correction the two traces sit at different
+                            constants and the plot exaggerates the gap.
 
     Returns:
         plotly.graph_objects.Figure with predicted (and reference) E(V).
@@ -359,6 +369,8 @@ def e_v_curve(
         with torch.no_grad():
             out = model(g)
             energy = float(out.item() if out.ndim == 0 else out.sum().item())
+        if shifts is not None:
+            energy += float(sum(shifts[int(z)] for z in atoms.numbers))
         volumes.append(atoms.get_volume())
         energies_pred.append(energy)
 

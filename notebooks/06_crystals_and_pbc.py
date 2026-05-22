@@ -817,7 +817,7 @@ def _(mo):
 
 
 @app.cell
-def _(EMT, e_v_curve, model, np, test_atoms):
+def _(EMT, e_v_curve, model, np, shifts, test_atoms):
     _base = test_atoms[0]
     _volume_fractions = np.linspace(0.9, 1.1, 11)
 
@@ -828,8 +828,45 @@ def _(EMT, e_v_curve, model, np, test_atoms):
         _a.calc = EMT()
         _ref_energies.append(_a.get_potential_energy())
 
-    _ev_fig = e_v_curve(model, _base, list(_volume_fractions), reference_energies=_ref_energies)
+    _ev_fig = e_v_curve(
+        model,
+        _base,
+        list(_volume_fractions),
+        reference_energies=_ref_energies,
+        shifts=shifts,
+    )
     _ev_fig
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    **What to look for here.** Both curves are now in physical eV units
+    (the model's reference-shift `Σ shifts[z]` is added back per atom
+    inside `e_v_curve`), so the absolute offset is a real comparison.
+
+    Two things you should see, and what they tell you:
+
+    1. **Both wells are parabolic-ish** with a clear minimum. Good —
+       the model has learned the qualitative cohesive behavior of FCC
+       Cu (compression hurts, expansion hurts, equilibrium in
+       between).
+    2. **The model's minimum may sit at slightly larger volume than
+       EMT's**, and the model's curvature may be softer than EMT's.
+       This is a real generalization error: our training data was
+       concentrated near equilibrium (`strain_range=0.05`,
+       `rattle_amp=0.1`), so the model has limited signal on the
+       deeper-compression tail where the curves diverge most. Longer
+       training, wider strain sampling, or a stronger energy weight
+       would tighten the well.
+
+    For a teaching demo, this is exactly the lesson: a trained MLIP
+    interpolates well in the regime it saw, and extrapolates with
+    increasing error outside it. A bigger dataset and more epochs
+    would close this gap; a fundamentally bigger gap would point at a
+    capacity or featurization problem instead.
+    """)
     return
 
 
