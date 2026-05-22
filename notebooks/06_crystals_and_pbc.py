@@ -65,19 +65,26 @@ def _():
     from tinymlip.graph import build_graph, collate_graphs
     from tinymlip.layers import EquivariantInteraction
     from tinymlip.models import EquivariantMPNN
-    from tinymlip.train import energy_force_loss, fit_atomic_reference, train
+    from tinymlip.train import energy_force_loss, evaluate, fit_atomic_reference, train
     from tinymlip.viz import e_v_curve
 
     return (
+        DataLoader,
         EMT,
         EquivariantMPNN,
         ase,
         build_graph,
         compute_forces_and_stress,
+        evaluate,
+        fit_atomic_reference,
         go,
         load_cu_emt,
+        make_collate,
+        np,
         pl,
+        to_torch_dataset_cu_emt,
         torch,
+        train,
     )
 
 
@@ -473,6 +480,176 @@ def _(load_cu_emt, mo):
     mo.vstack([
         mo.md(f"Generated/loaded **{len(all_atoms)}** snapshots in **{elapsed:.1f} s**"),
         meta.head(),
+    ])
+    return all_atoms, meta
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## Training the equivariant model on (E, F, σ)
+
+    We minimize a weighted sum of mean-absolute errors:
+
+    \[
+        \mathcal{L} = w_E \cdot \mathrm{MAE}(E) + w_F \cdot \mathrm{MAE}(F) + w_\sigma \cdot \mathrm{MAE}(\sigma).
+    \]
+
+    The defaults at `tiny` are `w_E = 1`, `w_F = 100`, `w_σ = 10`:
+
+    - `w_E = 1` — energies are ~10 eV magnitude per snapshot; MAE in the
+      ones-of-meV range, so a coefficient of 1 puts the energy term at the
+      same scale as the others below.
+    - `w_F = 100` — force components are ~eV/Å magnitude; an MAE of 10 meV/Å
+      is excellent, and a unit weight would let the energy MAE dominate.
+      The factor of 100 brings the force MAE up to a comparable contribution.
+    - `w_σ = 10` — stress components are ~meV/Å³ magnitude (much smaller than
+      forces in absolute units); a coefficient of 10 is enough to make the
+      stress term visible but not dominant. Setting `w_σ = 0` recovers the
+      nb05 loss exactly.
+
+    `fit_atomic_reference` removes the per-element baseline so the model only
+    has to learn the *deviation* from the average per-atom energy — a free
+    win that we've used since nb04.
+    """)
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    w_s_slider = mo.ui.slider(start=0.0, stop=100.0, step=1.0, value=10.0, label="w_σ")
+    n_epochs_slider = mo.ui.slider(start=5, stop=60, step=5, value=30, label="n_epochs")
+    hidden_slider = mo.ui.slider(start=8, stop=64, step=8, value=32, label="hidden_dim")
+    mo.hstack([w_s_slider, n_epochs_slider, hidden_slider])
+    return hidden_slider, n_epochs_slider, w_s_slider
+
+
+@app.cell
+def _(
+    DataLoader,
+    EquivariantMPNN,
+    all_atoms,
+    fit_atomic_reference,
+    hidden_slider,
+    make_collate,
+    meta,
+    mo,
+    n_epochs_slider,
+    np,
+    to_torch_dataset_cu_emt,
+    torch,
+    train,
+    w_s_slider,
+):
+    train_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "train"]
+    val_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "val"]
+    test_atoms = [a for a, s in zip(all_atoms, meta["split"]) if s == "test"]
+
+    shifts = fit_atomic_reference(
+        train_atoms,
+        np.array([a.info["energy"] for a in train_atoms]),
+    )
+
+    collate = make_collate(cutoff=4.0)
+    train_loader = DataLoader(
+        to_torch_dataset_cu_emt(train_atoms),
+        batch_size=8, shuffle=True, collate_fn=collate,
+    )
+    val_loader = DataLoader(
+        to_torch_dataset_cu_emt(val_atoms),
+        batch_size=16, shuffle=False, collate_fn=collate,
+    )
+
+    torch.manual_seed(0)
+    model = EquivariantMPNN(
+        n_layers=3, hidden_dim=hidden_slider.value, num_basis=20, cutoff=4.0,
+    )
+    log = train(
+        model, train_loader, val_loader,
+        n_epochs=n_epochs_slider.value, lr=1e-3,
+        w_e=1.0, w_f=100.0, w_s=w_s_slider.value,
+        shifts=shifts,
+    )
+
+    mo.vstack([
+        mo.md(
+            f"""
+    - **Splits:** {len(train_atoms)} train / {len(val_atoms)} val / {len(test_atoms)} test
+    - **Per-Cu reference shift:** {shifts[29]:.4f} eV
+    - **Training:** EquivariantMPNN(n_layers=3, hidden_dim={hidden_slider.value}, num_basis=20, cutoff=4.0) for {n_epochs_slider.value} epochs
+    """
+        ),
+        mo.md("**Last 6 log rows:**"),
+        log.tail(6),
+    ])
+    return collate, log, model, shifts, test_atoms
+
+
+@app.cell(hide_code=True)
+def _(go, log, pl):
+    _fig = go.Figure()
+    for _split, _color in [("train", "steelblue"), ("val", "indianred")]:
+        _sub = log.filter(pl.col("split") == _split)
+        _fig.add_trace(
+            go.Scatter(
+                x=_sub["epoch"], y=_sub["loss"],
+                mode="lines+markers", name=f"{_split} loss",
+                line=dict(color=_color),
+            )
+        )
+    _fig.update_layout(
+        xaxis_title="epoch", yaxis_title="loss",
+        yaxis_type="log",
+        title="Training curve — Cu/EMT, E + F + σ loss",
+        width=700, height=400,
+    )
+    _fig
+    return
+
+
+@app.cell
+def _(
+    DataLoader,
+    collate,
+    evaluate,
+    mo,
+    model,
+    pl,
+    shifts,
+    test_atoms,
+    to_torch_dataset_cu_emt,
+    w_s_slider,
+):
+    test_loader = DataLoader(
+        to_torch_dataset_cu_emt(test_atoms),
+        batch_size=16, shuffle=False, collate_fn=collate,
+    )
+    test_metrics = evaluate(
+        model, test_loader,
+        shifts=shifts, w_e=1.0, w_f=100.0, w_s=w_s_slider.value,
+    )
+    # n_atoms per snapshot is constant for this dataset, so per-atom energy MAE
+    # is well-defined. Convert all to meV (or meV/Å, meV/Å³) for readability.
+    _n_atoms_per_snap = test_atoms[0].get_global_number_of_atoms()
+
+    mo.vstack([
+        mo.md(f"**Test-set MAEs** ({len(test_atoms)} snapshots, batch 16):"),
+        pl.DataFrame(
+            {
+                "metric": [
+                    "energy (meV / atom)",
+                    "force component (meV / Å)",
+                    "stress component (meV / Å³)",
+                    "total loss",
+                ],
+                "value": [
+                    f"{1000 * test_metrics['energy_mae'] / _n_atoms_per_snap:.3f}",
+                    f"{1000 * test_metrics['force_mae']:.3f}",
+                    f"{1000 * test_metrics['stress_mae']:.3f}" if "stress_mae" in test_metrics else "—",
+                    f"{test_metrics['loss']:.4f}",
+                ],
+            }
+        ),
     ])
     return
 
