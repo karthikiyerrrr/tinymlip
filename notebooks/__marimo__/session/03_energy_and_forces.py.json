@@ -1,0 +1,321 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.6",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "26322ce0023197531dd195f93ede74dd",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "# 03 \u00b7 Energy and forces\n\n**What this notebook teaches.** A real MLIP turns the per-atom features\nfrom notebook 02 into a single number \u2014 the molecular energy \u2014 and then\nrecovers forces by differentiating that energy with respect to the atomic\npositions. Three ideas, in order:\n\n1. **Atomic-number embedding.** Each atom becomes a learnable feature\n   vector keyed by its element (H, C, O, \u2026). That's the model's input.\n2. **Readout + sum.** A small per-atom MLP turns those features into a\n   per-atom scalar; the molecular energy is the *sum* over atoms. The sum\n   is what makes the energy *size-extensive* \u2014 twice as much molecule,\n   twice as much energy.\n3. **Forces via autograd.** Forces are the negative gradient of the\n   energy with respect to positions: $F_i = -\\partial E / \\partial \\mathbf{r}_i$.\n   `torch.autograd.grad` does the bookkeeping. No separate force head \u2014\n   ever. This guarantees the forces are *conservative*.\n\n**Prerequisites.** Notebook 02 (message passing).\n\n**By the end you can:**\n- Read an MLIP forward pass end-to-end and name the embedding, the\n  interactions, the readout, and the sum.\n- Explain in one sentence why MLIP energies are size-extensive.\n- Compute autograd forces from a model's energy and verify them against\n  central differences."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "1d0db38904205bec4d6f6f6a1f6cec3e",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "2d7e0685c8a6ae4cfb76970acaa31c8d",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "&lt;marimo-slider data-initial-value=&#x27;5.0&#x27; data-label=&#x27;&amp;quot;&amp;lt;span class=&amp;#92;&amp;quot;markdown prose dark:prose-invert contents&amp;#92;&amp;quot;&amp;gt;&amp;lt;span class=&amp;#92;&amp;quot;paragraph&amp;#92;&amp;quot;&amp;gt;cutoff (\u00c5)&amp;lt;/span&amp;gt;&amp;lt;/span&amp;gt;&amp;quot;&#x27; data-start=&#x27;2.0&#x27; data-stop=&#x27;6.0&#x27; data-step=&#x27;0.1&#x27; data-steps=&#x27;[]&#x27; data-debounce=&#x27;false&#x27; data-disabled=&#x27;false&#x27; data-orientation=&#x27;&amp;quot;horizontal&amp;quot;&#x27; data-show-value=&#x27;false&#x27; data-include-input=&#x27;false&#x27; data-full-width=&#x27;false&#x27;&gt;&lt;/marimo-slider&gt;"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "80e64b5242d1b844077a62546875e6e0",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "> **Try this.** Drop `cutoff` to 2 \u00c5 \u2014 what happens to the per-atom\n> energies and forces, and why?\n>\n> <details><summary>Answer</summary>\n>\n> At 2 \u00c5 only the shortest covalent bonds remain (C\u2013H \u2248 1.1 \u00c5, O\u2013H \u2248\n> 1.0 \u00c5, C\u2013O \u2248 1.4 \u00c5), the graph fragments, and per-atom energies\n> collapse toward identical values for atoms with identical\n> immediate-neighbor sets. The three methyl hydrogens, for instance,\n> all see exactly one neighbor at exactly the same distance, so their\n> bars converge.\n>\n> </details>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "d7e6ecd3030287b26f057490f6373012",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "&lt;marimo-slider data-initial-value=&#x27;3&#x27; data-label=&#x27;&amp;quot;&amp;lt;span class=&amp;#92;&amp;quot;markdown prose dark:prose-invert contents&amp;#92;&amp;quot;&amp;gt;&amp;lt;span class=&amp;#92;&amp;quot;paragraph&amp;#92;&amp;quot;&amp;gt;n_layers&amp;lt;/span&amp;gt;&amp;lt;/span&amp;gt;&amp;quot;&#x27; data-start=&#x27;1&#x27; data-stop=&#x27;5&#x27; data-step=&#x27;1&#x27; data-steps=&#x27;[]&#x27; data-debounce=&#x27;false&#x27; data-disabled=&#x27;false&#x27; data-orientation=&#x27;&amp;quot;horizontal&amp;quot;&#x27; data-show-value=&#x27;false&#x27; data-include-input=&#x27;false&#x27; data-full-width=&#x27;false&#x27;&gt;&lt;/marimo-slider&gt;"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "6111fb3e5f709858e0a5254f404a7e8b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<pre class='text-xs'>AtomGraph(n_atoms=9, n_edges=72, cutoff=5.00, pbc=False)</pre>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "802747ef4af149b34e6208bc5b7950de",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "## What the pipeline does, line by line\n\nEvery modern MLIP runs roughly this four-step pipeline. The next cell walks\nit by hand so you can watch each step's output:\n\n1. **Embed atomic numbers.** Each atom starts as a learnable feature\n   vector keyed by its element. Untrained, so the vectors are random \u2014\n   but every H atom starts *identical* to every other H, every C\n   identical to every other C. Element is the only thing the model\n   \"knows\" before message passing.\n2. **Message passing.** Each interaction layer mixes in features from\n   neighbors (notebook 02). After $k$ layers, atom $i$ has seen\n   everything within $k$ hops on the graph. Two H atoms that started\n   identical become *distinguishable* the moment their neighborhoods\n   differ.\n3. **Per-atom readout.** A small MLP turns each atom's final feature\n   vector into one scalar \u2014 its per-atom energy contribution. The MLP\n   is shared across atoms; the same function gets applied independently\n   to each one.\n4. **Sum.** The molecular energy is the sum of those per-atom scalars.\n   That single choice is what makes the energy size-extensive (the next\n   section verifies it).\n\nBelow, `atom_embeddings`, `atom_features`, `per_atom_energies`, and\n`energy` are the intermediate tensors at each step.\n\n**Why a *learnable* embedding, and not just `z` itself?** Atomic number as a\nscalar input would force the model to fight a structural fact: \"carbon is\n6\u00d7 as much something as hydrogen\" \u2014 an artefact of the periodic table, not\nof chemistry. A one-hot vector avoids that but is wasteful; in fact, a\n`Linear` layer applied to a one-hot vector is *mathematically identical* to\nan `Embedding` table lookup \u2014 the embedding is just the efficient form.\nMaking the vector **learnable** lets the model decide *what about element\nidentity matters* for energy prediction (bond-length preferences,\nelectronegativity-like channels, etc.) instead of forcing us to\nhand-engineer features. In notebook 04 these embedding vectors are trained,\nand the post-training C vs H vectors become distinguishable in ways that\nmatter for energy.\n\n**Where do the trained-filter bumps from notebook 02 live in this model?**\nInside each `InvariantInteraction.filter_net`. With `n_layers = 3` there are\nthree independent filter networks, each learning its own shape \u2014 they\ncompose to give the per-atom energy."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "03e9e308e22e3121650cea6add0f80fe",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "**Pipeline shapes** (one row per step):\n\n- embedding(z): `(9, 32)`\n- after 3 interaction(s): `(9, 32)`\n- readout: `(9,)`\n- sum: `()` \u2192 scalar **E_total = -1.7803**"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "cade274c145db1990c5aa508135e6901",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-plotly data-figure='{&quot;data&quot;:[{&quot;hovertemplate&quot;:&quot;%{x}: %{y:.4f}&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;marker&quot;:{&quot;color&quot;:&quot;#1f77b4&quot;},&quot;x&quot;:[&quot;C[0]&quot;,&quot;C[1]&quot;,&quot;O[2]&quot;,&quot;H[3]&quot;,&quot;H[4]&quot;,&quot;H[5]&quot;,&quot;H[6]&quot;,&quot;H[7]&quot;,&quot;H[8]&quot;],&quot;y&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;jQIxvkZvMb5vZXu+jcNKvizLSb5GAU2+xSBMvnpzTL5mC0e+&quot;},&quot;type&quot;:&quot;bar&quot;}],&quot;layout&quot;:{&quot;template&quot;:{&quot;data&quot;:{&quot;histogram2dcontour&quot;:[{&quot;type&quot;:&quot;histogram2dcontour&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;choropleth&quot;:[{&quot;type&quot;:&quot;choropleth&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;histogram2d&quot;:[{&quot;type&quot;:&quot;histogram2d&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;heatmap&quot;:[{&quot;type&quot;:&quot;heatmap&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;contourcarpet&quot;:[{&quot;type&quot;:&quot;contourcarpet&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;contour&quot;:[{&quot;type&quot;:&quot;contour&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;surface&quot;:[{&quot;type&quot;:&quot;surface&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;mesh3d&quot;:[{&quot;type&quot;:&quot;mesh3d&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;scatter&quot;:[{&quot;fillpattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2},&quot;type&quot;:&quot;scatter&quot;}],&quot;parcoords&quot;:[{&quot;type&quot;:&quot;parcoords&quot;,&quot;line&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterpolargl&quot;:[{&quot;type&quot;:&quot;scatterpolargl&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;bar&quot;:[{&quot;error_x&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;error_y&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;marker&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#E5ECF6&quot;,&quot;width&quot;:0.5},&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;bar&quot;}],&quot;scattergeo&quot;:[{&quot;type&quot;:&quot;scattergeo&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterpolar&quot;:[{&quot;type&quot;:&quot;scatterpolar&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;histogram&quot;:[{&quot;marker&quot;:{&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;histogram&quot;}],&quot;scattergl&quot;:[{&quot;type&quot;:&quot;scattergl&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatter3d&quot;:[{&quot;type&quot;:&quot;scatter3d&quot;,&quot;line&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}},&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattermap&quot;:[{&quot;type&quot;:&quot;scattermap&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattermapbox&quot;:[{&quot;type&quot;:&quot;scattermapbox&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterternary&quot;:[{&quot;type&quot;:&quot;scatterternary&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattercarpet&quot;:[{&quot;type&quot;:&quot;scattercarpet&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;carpet&quot;:[{&quot;aaxis&quot;:{&quot;endlinecolor&quot;:&quot;#2a3f5f&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;minorgridcolor&quot;:&quot;white&quot;,&quot;startlinecolor&quot;:&quot;#2a3f5f&quot;},&quot;baxis&quot;:{&quot;endlinecolor&quot;:&quot;#2a3f5f&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;minorgridcolor&quot;:&quot;white&quot;,&quot;startlinecolor&quot;:&quot;#2a3f5f&quot;},&quot;type&quot;:&quot;carpet&quot;}],&quot;table&quot;:[{&quot;cells&quot;:{&quot;fill&quot;:{&quot;color&quot;:&quot;#EBF0F8&quot;},&quot;line&quot;:{&quot;color&quot;:&quot;white&quot;}},&quot;header&quot;:{&quot;fill&quot;:{&quot;color&quot;:&quot;#C8D4E3&quot;},&quot;line&quot;:{&quot;color&quot;:&quot;white&quot;}},&quot;type&quot;:&quot;table&quot;}],&quot;barpolar&quot;:[{&quot;marker&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#E5ECF6&quot;,&quot;width&quot;:0.5},&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;barpolar&quot;}],&quot;pie&quot;:[{&quot;automargin&quot;:true,&quot;type&quot;:&quot;pie&quot;}]},&quot;layout&quot;:{&quot;autotypenumbers&quot;:&quot;strict&quot;,&quot;colorway&quot;:[&quot;#636efa&quot;,&quot;#EF553B&quot;,&quot;#00cc96&quot;,&quot;#ab63fa&quot;,&quot;#FFA15A&quot;,&quot;#19d3f3&quot;,&quot;#FF6692&quot;,&quot;#B6E880&quot;,&quot;#FF97FF&quot;,&quot;#FECB52&quot;],&quot;font&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;hovermode&quot;:&quot;closest&quot;,&quot;hoverlabel&quot;:{&quot;align&quot;:&quot;left&quot;},&quot;paper_bgcolor&quot;:&quot;white&quot;,&quot;plot_bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;polar&quot;:{&quot;bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;angularaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;radialaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;}},&quot;ternary&quot;:{&quot;bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;aaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;baxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;caxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;}},&quot;coloraxis&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}},&quot;colorscale&quot;:{&quot;sequential&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]],&quot;sequentialminus&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]],&quot;diverging&quot;:[[0,&quot;#8e0152&quot;],[0.1,&quot;#c51b7d&quot;],[0.2,&quot;#de77ae&quot;],[0.3,&quot;#f1b6da&quot;],[0.4,&quot;#fde0ef&quot;],[0.5,&quot;#f7f7f7&quot;],[0.6,&quot;#e6f5d0&quot;],[0.7,&quot;#b8e186&quot;],[0.8,&quot;#7fbc41&quot;],[0.9,&quot;#4d9221&quot;],[1,&quot;#276419&quot;]]},&quot;xaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;,&quot;title&quot;:{&quot;standoff&quot;:15},&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;automargin&quot;:true,&quot;zerolinewidth&quot;:2},&quot;yaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;,&quot;title&quot;:{&quot;standoff&quot;:15},&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;automargin&quot;:true,&quot;zerolinewidth&quot;:2},&quot;scene&quot;:{&quot;xaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2},&quot;yaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2},&quot;zaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2}},&quot;shapedefaults&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;}},&quot;annotationdefaults&quot;:{&quot;arrowcolor&quot;:&quot;#2a3f5f&quot;,&quot;arrowhead&quot;:0,&quot;arrowwidth&quot;:1},&quot;geo&quot;:{&quot;bgcolor&quot;:&quot;white&quot;,&quot;landcolor&quot;:&quot;#E5ECF6&quot;,&quot;subunitcolor&quot;:&quot;white&quot;,&quot;showland&quot;:true,&quot;showlakes&quot;:true,&quot;lakecolor&quot;:&quot;white&quot;},&quot;title&quot;:{&quot;x&quot;:0.05},&quot;mapbox&quot;:{&quot;style&quot;:&quot;light&quot;}}},&quot;shapes&quot;:[{&quot;line&quot;:{&quot;color&quot;:&quot;grey&quot;,&quot;dash&quot;:&quot;dash&quot;},&quot;type&quot;:&quot;line&quot;,&quot;x0&quot;:0,&quot;x1&quot;:1,&quot;xref&quot;:&quot;x domain&quot;,&quot;y0&quot;:-0.19781108697255453,&quot;y1&quot;:-0.19781108697255453,&quot;yref&quot;:&quot;y&quot;}],&quot;annotations&quot;:[{&quot;showarrow&quot;:false,&quot;text&quot;:&quot;mean = E_total / N = -0.198&quot;,&quot;x&quot;:1,&quot;xanchor&quot;:&quot;right&quot;,&quot;xref&quot;:&quot;x domain&quot;,&quot;y&quot;:-0.19781108697255453,&quot;yanchor&quot;:&quot;bottom&quot;,&quot;yref&quot;:&quot;y&quot;}],&quot;title&quot;:{&quot;text&quot;:&quot;Per-atom energies for ethanol (untrained model, h=32, layers=3). Sum: E_total = -1.7803&quot;},&quot;xaxis&quot;:{&quot;title&quot;:{&quot;text&quot;:&quot;atom&quot;}},&quot;yaxis&quot;:{&quot;title&quot;:{&quot;text&quot;:&quot;per-atom energy (arbitrary units)&quot;}},&quot;height&quot;:360,&quot;dragmode&quot;:&quot;zoom&quot;}}' data-config='{}'></marimo-plotly>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "65ed3bfee706b5606046da03ecb7ac62",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "### Reading this chart\n\nEach bar is one atom's contribution to the total energy. The dashed line\nis `E_total / N` \u2014 the mean \u2014 and the molecular energy is the sum of all\nthe bars (nothing else combines them).\n\nA few things to notice (defaults: cutoff = 5 \u00c5, `n_layers = 3`):\n\n- **Absolute values aren't meaningful.** The model is untrained, so the\n  scale is arbitrary. What's interesting is the *shape* \u2014 which atoms\n  contribute more, and which cluster together.\n- **Atoms in the same chemical environment cluster.** All H atoms\n  started identical in the embedding; any difference you see comes from\n  message passing. In this rMD17 ethanol structure the heavy atoms are\n  `C[0]` (the carbon bonded to oxygen), `C[1]` (the methyl carbon), and\n  `O[2]`. So:\n    - `H[3]`, `H[4]` are **methylene** H's (on `C[0]`),\n    - `H[5]`, `H[6]`, `H[7]` are **methyl** H's (on `C[1]`),\n    - `H[8]` is the **hydroxyl** H (on `O[2]`).\n  At the default settings you can see the three groups split apart on\n  the chart even though no training has happened \u2014 message passing\n  alone is enough to make chemically distinct hydrogens distinguishable.\n- **Move the `n_layers` slider.** At `n_layers = 1`, the H bars nearly\n  collapse \u2014 one layer of message passing only reaches the immediate\n  neighbor, and every H has just one heavy-atom neighbor, so the model\n  can barely tell them apart. At `n_layers = 5`, the random init gets\n  amplified through the extra stacks and the clean three-group picture\n  blurs. *After training, deeper stacks resolve fine \u2014 the blur is\n  random-init noise compounding through depth, which the training loss\n  kills.* `n_layers = 3` is the sweet spot for this untrained demo.\n\n**Caveat \u2014 these bars are not physical partial energies.** Only the\n**sum** of the bars is fit to data; the per-atom partitioning is internal\nbookkeeping, not a physical observable. A model that added $+5$ to every\nC and subtracted $5\\,N_C$ from one H would give the same total energy\nand the same forces, with completely different bars. The clustering you\nsee *is* real \u2014 it's driven by message-passing on the graph \u2014 but the\n*values* themselves are arbitrary. Treat the chart as a useful internal\nview, not as a Mulliken / Hirshfeld-style partitioning."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "6dffecf3f580fe237f46cec937875d3b",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "## Why a sum?\n\nThe molecular energy is the *sum* of per-atom contributions. That single\nchoice gives the model a property real molecules have for free:\n**size-extensivity** \u2014 twice as much molecule, twice as much energy.\nConceptually, the readout is an **intensive** function applied\nindependently to each atom; summing it makes the molecular energy\n**extensive**. That's the thermodynamic framing of the same statement.\n\nA model that pooled the per-atom features into one global vector and then\npassed it through a final MLP would NOT be size-extensive. Two copies of\nethanol sitting 20 \u00c5 apart should give exactly twice the energy of one \u2014 and\nbecause the radial cutoff guarantees no edges between the copies, our sum\ndelivers that automatically (no training required).\n\n**One omission that real MLIPs add back.** Real MLIPs also subtract a\nlearned per-element reference energy $E_0(z)$ from each per-atom\ncontribution *before* summing. DFT total energies are dominated by the\nkeV-scale nuclear-charge baseline; the chemistry we actually want to learn\nlives in the meV/atom remainder. Notebook 04 wires this in; we omit it\nin notebook 03 so the readout reads as cleanly as possible."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "07e0894df8d2bbe61cac0aed12a650a4",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "**E(ethanol)** = `-1.780300`\n\n**E(two ethanols, 20 \u00c5 apart)** = `-3.560599`\n\n**ratio E_dimer / E_single** = `2.000000` (target: exactly 2)\n\n**E_dimer \u2212 2\u00b7E_single** = `2.38e-07`\n\nThat residual is essentially zero (machine precision in float32). The sum readout + finite cutoff make this *structural*, not learned \u2014 it holds on the untrained model and would still hold after training.\n\nContrast with the MLP-on-flattened-coords baseline from notebook 01: that model would fail extensivity for a different reason. It has no notion of '20 \u00c5 apart from N atoms' \u2014 every input coordinate matters, and the dimer's energy would be a completely different learned function from the monomer's. There is no path for it to discover the additive structure that falls out of our architecture for free."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "b25593836636219c28411ea2d7f42bad",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "## Forces from autograd\n\nThe molecular energy is a scalar function of every atom's position. The\nforce on atom $i$ is the negative gradient of that energy with respect to\n$\\mathbf{r}_i$:\n\n$$\\mathbf{F}_i = -\\frac{\\partial E}{\\partial \\mathbf{r}_i}.$$\n\nTwo things follow for free:\n\n1. **The forces are conservative.** Anything that comes out of $-\\nabla E$\n   has zero curl, so the line integral around a closed loop in position\n   space is zero. In molecular dynamics that means the NVE ensemble\n   conserves energy.\n\n   The *negative version* makes the property concrete: a force field whose\n   components were predicted directly (a \"force head\" emitting `[N, 3]`)\n   has no guarantee that $\\partial F_x / \\partial y = \\partial F_y / \\partial x$.\n   The curl is non-zero in general, so the work done around a closed loop\n   in configuration space is non-zero \u2014 an MD simulation can *gain or\n   lose energy from nothing* by cycling through a closed sequence of\n   geometries. In practice this shows up as steady energy drift in NVE,\n   and is the single reason the $F = -\\nabla E$ architecture is\n   non-negotiable for MLIPs.\n\n2. **`torch.autograd.grad` does the bookkeeping.** As long as `graph.pos`\n   is the autograd leaf (we set `requires_grad=True` on it before the\n   forward pass), one autograd call gives us all $3N$ force components.\n\n   The one non-obvious flag in `compute_forces` is `create_graph=True`. It\n   keeps the autograd graph alive *through* the force computation, so\n   that notebook 04's force-matching loss \u2014 which depends on the\n   predicted forces \u2014 can backprop through them all the way to the model\n   parameters. Without it, the forces would still be numerically\n   correct, but they couldn't be trained on.\n\nWe package that one line as `tinymlip.compute_forces(energy, pos)`. The\nforces below are from our **untrained** model, so their magnitudes and\ndirections are random \u2014 what matters is that they exist, they have the\nright shape, and \u03a3 F \u2248 0 (which we'll check explicitly in the next\nsection)."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "be8f2e00f1e462aadd4ca9db5418a481",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "&lt;marimo-slider data-initial-value=&#x27;20.0&#x27; data-label=&#x27;&amp;quot;&amp;lt;span class=&amp;#92;&amp;quot;markdown prose dark:prose-invert contents&amp;#92;&amp;quot;&amp;gt;&amp;lt;span class=&amp;#92;&amp;quot;paragraph&amp;#92;&amp;quot;&amp;gt;arrow length scale&amp;lt;/span&amp;gt;&amp;lt;/span&amp;gt;&amp;quot;&#x27; data-start=&#x27;1.0&#x27; data-stop=&#x27;50.0&#x27; data-step=&#x27;1.0&#x27; data-steps=&#x27;[]&#x27; data-debounce=&#x27;false&#x27; data-disabled=&#x27;false&#x27; data-orientation=&#x27;&amp;quot;horizontal&amp;quot;&#x27; data-show-value=&#x27;false&#x27; data-include-input=&#x27;false&#x27; data-full-width=&#x27;false&#x27;&gt;&lt;/marimo-slider&gt;"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "087c442f73871dce9e3309548296f3c4",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "`forces.shape` = `(9, 3)` &nbsp;\u00b7&nbsp; `|F|_max` = `0.0189` (arbitrary units \u2014 model is untrained)"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ZHCJ",
+      "code_hash": "2305b5be0bbc14b36fb6efb4b48c0168",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-plotly data-figure='{&quot;data&quot;:[{&quot;hoverinfo&quot;:&quot;skip&quot;,&quot;line&quot;:{&quot;color&quot;:&quot;#bbbbbb&quot;,&quot;width&quot;:3},&quot;mode&quot;:&quot;lines&quot;,&quot;name&quot;:&quot;bonds&quot;,&quot;showlegend&quot;:false,&quot;x&quot;:[-0.2819003462791443,-0.8921898007392883,null,-0.2819003462791443,1.1089726686477661,null,-0.2819003462791443,-0.4761355221271515,null,-0.2819003462791443,-0.9348013401031494,null,-0.8921898007392883,-1.5874077081680298,null,-0.8921898007392883,-0.3675932288169861,null,-0.8921898007392883,-1.5886527299880981,null,1.1089726686477661,1.3410322666168213,null],&quot;y&quot;:[-0.48714038729667664,0.9331685304641724,null,-0.48714038729667664,-0.3703526556491852,null,-0.48714038729667664,-0.9584097266197205,null,-0.48714038729667664,-1.0221847295761108,null,0.9331685304641724,0.8264263868331909,null,0.9331685304641724,1.8280502557754517,null,0.9331685304641724,1.1023763418197632,null,-0.3703526556491852,-1.2139251232147217,null],&quot;z&quot;:[0.09391269087791443,0.3443450629711151,null,0.09391269087791443,-0.3883616328239441,null,0.09391269087791443,0.9941757917404175,null,0.09391269087791443,-0.6235703825950623,null,0.3443450629711151,1.1546871662139893,null,0.3443450629711151,0.6679622530937195,null,0.3443450629711151,-0.45294836163520813,null,-0.3883616328239441,-0.7980175018310547,null],&quot;type&quot;:&quot;scatter3d&quot;},{&quot;hoverinfo&quot;:&quot;skip&quot;,&quot;line&quot;:{&quot;color&quot;:&quot;crimson&quot;,&quot;width&quot;:4},&quot;mode&quot;:&quot;lines&quot;,&quot;name&quot;:&quot;forces&quot;,&quot;showlegend&quot;:false,&quot;x&quot;:[-0.2819003462791443,-0.3873223662376404,null,-0.8921898007392883,-0.9372434616088867,null,1.1089726686477661,0.9308030605316162,null,-0.4761355221271515,-0.5655942559242249,null,-0.9348013401031494,-0.7331962585449219,null,-1.5874077081680298,-1.3757787942886353,null,-0.3675932288169861,-0.4392397403717041,null,-1.5886527299880981,-1.3414641618728638,null,1.3410322666168213,1.1703602075576782,null],&quot;y&quot;:[-0.48714038729667664,-0.3947242796421051,null,0.9331685304641724,0.7926376461982727,null,-0.3703526556491852,-0.1945447027683258,null,-0.9584097266197205,-0.7078111171722412,null,-1.0221847295761108,-0.7050520777702332,null,0.8264263868331909,0.5269299745559692,null,1.8280502557754517,1.778010368347168,null,1.1023763418197632,0.9077924489974976,null,-1.2139251232147217,-1.3652293682098389,null],&quot;z&quot;:[0.09391269087791443,0.14457371830940247,null,0.3443450629711151,0.34224119782447815,null,-0.3883616328239441,-0.2549903392791748,null,0.9941757917404175,0.950812578201294,null,-0.6235703825950623,-0.5802091360092163,null,1.1546871662139893,1.1540766954421997,null,0.6679622530937195,0.5329744815826416,null,-0.45294836163520813,-0.4344465136528015,null,-0.7980175018310547,-0.862847626209259,null],&quot;type&quot;:&quot;scatter3d&quot;},{&quot;anchor&quot;:&quot;tail&quot;,&quot;colorscale&quot;:[[0,&quot;crimson&quot;],[1,&quot;crimson&quot;]],&quot;hoverinfo&quot;:&quot;skip&quot;,&quot;name&quot;:&quot;arrowheads&quot;,&quot;showscale&quot;:false,&quot;sizemode&quot;:&quot;absolute&quot;,&quot;sizeref&quot;:0.08,&quot;u&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;gufXvTKKOL0Xcja+JTa3vZBxTj5DtVg+abuSvQAffT6mxC6+&quot;},&quot;v&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;qES9PVXnD74ABzQ+d06APjZfoj6YV5m+qvZMvQFBR76C7xq+&quot;},&quot;w&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;8oFPPTDhCbt8kgg+oZ0xvZibMT3gBiC6OjoKvjGRlzyoxYS9&quot;},&quot;x&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;Hk/GvjDvb78cSW4/ycoQv8CyO7+FGbC/COTgvhm1q79dzpU/&quot;},&quot;y&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;TRnKvk3qSj+6Nke+HDM1v0t+NL/i5AY/2JXjPxZlaD/Wv66/&quot;},&quot;z&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;IgsUPj06rz4YjoK+dGhzP5aIFL/JuJM/BHEIP8Zv3r6V41y/&quot;},&quot;type&quot;:&quot;cone&quot;},{&quot;hovertemplate&quot;:[&quot;atom 0 (C): |F| = 0.0075&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 1 (C): |F| = 0.0074&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 2 (O): |F| = 0.0142&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 3 (H): |F| = 0.0135&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 4 (H): |F| = 0.0189&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 5 (H): |F| = 0.0183&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 6 (H): |F| = 0.0080&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 7 (H): |F| = 0.0158&lt;extra&gt;&lt;/extra&gt;&quot;,&quot;atom 8 (H): |F| = 0.0119&lt;extra&gt;&lt;/extra&gt;&quot;],&quot;marker&quot;:{&quot;color&quot;:[&quot;#444444&quot;,&quot;#444444&quot;,&quot;#ff0d0d&quot;,&quot;#ffffff&quot;,&quot;#ffffff&quot;,&quot;#ffffff&quot;,&quot;#ffffff&quot;,&quot;#ffffff&quot;,&quot;#ffffff&quot;],&quot;line&quot;:{&quot;color&quot;:&quot;#222&quot;,&quot;width&quot;:1},&quot;size&quot;:[10.64,10.64,9.24,4.34,4.34,4.34,4.34,4.34,4.34]},&quot;mode&quot;:&quot;markers+text&quot;,&quot;name&quot;:&quot;atoms&quot;,&quot;showlegend&quot;:false,&quot;text&quot;:[&quot;C[0]&quot;,&quot;C[1]&quot;,&quot;O[2]&quot;,&quot;H[3]&quot;,&quot;H[4]&quot;,&quot;H[5]&quot;,&quot;H[6]&quot;,&quot;H[7]&quot;,&quot;H[8]&quot;],&quot;textfont&quot;:{&quot;color&quot;:&quot;#111&quot;,&quot;size&quot;:10},&quot;textposition&quot;:&quot;top center&quot;,&quot;x&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;PlWQvo1mZL/R8o0/CcjzviRPb78tMMu/LjW8vvlYy7/ypqs/&quot;},&quot;y&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;d2r5viLkbj/dnr2+V1p1v/PWgr+ukFM/jf3pP6sajT/mYZu/&quot;},&quot;z&quot;:{&quot;dtype&quot;:&quot;f4&quot;,&quot;bdata&quot;:&quot;TFXAPf9NsD5W18a+ToJ+P0+iH7/KzJM/k/8qP9no577gSky/&quot;},&quot;type&quot;:&quot;scatter3d&quot;}],&quot;layout&quot;:{&quot;template&quot;:{&quot;data&quot;:{&quot;histogram2dcontour&quot;:[{&quot;type&quot;:&quot;histogram2dcontour&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;choropleth&quot;:[{&quot;type&quot;:&quot;choropleth&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;histogram2d&quot;:[{&quot;type&quot;:&quot;histogram2d&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;heatmap&quot;:[{&quot;type&quot;:&quot;heatmap&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;contourcarpet&quot;:[{&quot;type&quot;:&quot;contourcarpet&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;contour&quot;:[{&quot;type&quot;:&quot;contour&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;surface&quot;:[{&quot;type&quot;:&quot;surface&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;},&quot;colorscale&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]]}],&quot;mesh3d&quot;:[{&quot;type&quot;:&quot;mesh3d&quot;,&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}],&quot;scatter&quot;:[{&quot;fillpattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2},&quot;type&quot;:&quot;scatter&quot;}],&quot;parcoords&quot;:[{&quot;type&quot;:&quot;parcoords&quot;,&quot;line&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterpolargl&quot;:[{&quot;type&quot;:&quot;scatterpolargl&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;bar&quot;:[{&quot;error_x&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;error_y&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;marker&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#E5ECF6&quot;,&quot;width&quot;:0.5},&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;bar&quot;}],&quot;scattergeo&quot;:[{&quot;type&quot;:&quot;scattergeo&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterpolar&quot;:[{&quot;type&quot;:&quot;scatterpolar&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;histogram&quot;:[{&quot;marker&quot;:{&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;histogram&quot;}],&quot;scattergl&quot;:[{&quot;type&quot;:&quot;scattergl&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatter3d&quot;:[{&quot;type&quot;:&quot;scatter3d&quot;,&quot;line&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}},&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattermap&quot;:[{&quot;type&quot;:&quot;scattermap&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattermapbox&quot;:[{&quot;type&quot;:&quot;scattermapbox&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scatterternary&quot;:[{&quot;type&quot;:&quot;scatterternary&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;scattercarpet&quot;:[{&quot;type&quot;:&quot;scattercarpet&quot;,&quot;marker&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}}}],&quot;carpet&quot;:[{&quot;aaxis&quot;:{&quot;endlinecolor&quot;:&quot;#2a3f5f&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;minorgridcolor&quot;:&quot;white&quot;,&quot;startlinecolor&quot;:&quot;#2a3f5f&quot;},&quot;baxis&quot;:{&quot;endlinecolor&quot;:&quot;#2a3f5f&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;minorgridcolor&quot;:&quot;white&quot;,&quot;startlinecolor&quot;:&quot;#2a3f5f&quot;},&quot;type&quot;:&quot;carpet&quot;}],&quot;table&quot;:[{&quot;cells&quot;:{&quot;fill&quot;:{&quot;color&quot;:&quot;#EBF0F8&quot;},&quot;line&quot;:{&quot;color&quot;:&quot;white&quot;}},&quot;header&quot;:{&quot;fill&quot;:{&quot;color&quot;:&quot;#C8D4E3&quot;},&quot;line&quot;:{&quot;color&quot;:&quot;white&quot;}},&quot;type&quot;:&quot;table&quot;}],&quot;barpolar&quot;:[{&quot;marker&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#E5ECF6&quot;,&quot;width&quot;:0.5},&quot;pattern&quot;:{&quot;fillmode&quot;:&quot;overlay&quot;,&quot;size&quot;:10,&quot;solidity&quot;:0.2}},&quot;type&quot;:&quot;barpolar&quot;}],&quot;pie&quot;:[{&quot;automargin&quot;:true,&quot;type&quot;:&quot;pie&quot;}]},&quot;layout&quot;:{&quot;autotypenumbers&quot;:&quot;strict&quot;,&quot;colorway&quot;:[&quot;#636efa&quot;,&quot;#EF553B&quot;,&quot;#00cc96&quot;,&quot;#ab63fa&quot;,&quot;#FFA15A&quot;,&quot;#19d3f3&quot;,&quot;#FF6692&quot;,&quot;#B6E880&quot;,&quot;#FF97FF&quot;,&quot;#FECB52&quot;],&quot;font&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;},&quot;hovermode&quot;:&quot;closest&quot;,&quot;hoverlabel&quot;:{&quot;align&quot;:&quot;left&quot;},&quot;paper_bgcolor&quot;:&quot;white&quot;,&quot;plot_bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;polar&quot;:{&quot;bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;angularaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;radialaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;}},&quot;ternary&quot;:{&quot;bgcolor&quot;:&quot;#E5ECF6&quot;,&quot;aaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;baxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;},&quot;caxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;}},&quot;coloraxis&quot;:{&quot;colorbar&quot;:{&quot;outlinewidth&quot;:0,&quot;ticks&quot;:&quot;&quot;}},&quot;colorscale&quot;:{&quot;sequential&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]],&quot;sequentialminus&quot;:[[0.0,&quot;#0d0887&quot;],[0.1111111111111111,&quot;#46039f&quot;],[0.2222222222222222,&quot;#7201a8&quot;],[0.3333333333333333,&quot;#9c179e&quot;],[0.4444444444444444,&quot;#bd3786&quot;],[0.5555555555555556,&quot;#d8576b&quot;],[0.6666666666666666,&quot;#ed7953&quot;],[0.7777777777777778,&quot;#fb9f3a&quot;],[0.8888888888888888,&quot;#fdca26&quot;],[1.0,&quot;#f0f921&quot;]],&quot;diverging&quot;:[[0,&quot;#8e0152&quot;],[0.1,&quot;#c51b7d&quot;],[0.2,&quot;#de77ae&quot;],[0.3,&quot;#f1b6da&quot;],[0.4,&quot;#fde0ef&quot;],[0.5,&quot;#f7f7f7&quot;],[0.6,&quot;#e6f5d0&quot;],[0.7,&quot;#b8e186&quot;],[0.8,&quot;#7fbc41&quot;],[0.9,&quot;#4d9221&quot;],[1,&quot;#276419&quot;]]},&quot;xaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;,&quot;title&quot;:{&quot;standoff&quot;:15},&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;automargin&quot;:true,&quot;zerolinewidth&quot;:2},&quot;yaxis&quot;:{&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;ticks&quot;:&quot;&quot;,&quot;title&quot;:{&quot;standoff&quot;:15},&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;automargin&quot;:true,&quot;zerolinewidth&quot;:2},&quot;scene&quot;:{&quot;xaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2},&quot;yaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2},&quot;zaxis&quot;:{&quot;backgroundcolor&quot;:&quot;#E5ECF6&quot;,&quot;gridcolor&quot;:&quot;white&quot;,&quot;linecolor&quot;:&quot;white&quot;,&quot;showbackground&quot;:true,&quot;ticks&quot;:&quot;&quot;,&quot;zerolinecolor&quot;:&quot;white&quot;,&quot;gridwidth&quot;:2}},&quot;shapedefaults&quot;:{&quot;line&quot;:{&quot;color&quot;:&quot;#2a3f5f&quot;}},&quot;annotationdefaults&quot;:{&quot;arrowcolor&quot;:&quot;#2a3f5f&quot;,&quot;arrowhead&quot;:0,&quot;arrowwidth&quot;:1},&quot;geo&quot;:{&quot;bgcolor&quot;:&quot;white&quot;,&quot;landcolor&quot;:&quot;#E5ECF6&quot;,&quot;subunitcolor&quot;:&quot;white&quot;,&quot;showland&quot;:true,&quot;showlakes&quot;:true,&quot;lakecolor&quot;:&quot;white&quot;},&quot;title&quot;:{&quot;x&quot;:0.05},&quot;mapbox&quot;:{&quot;style&quot;:&quot;light&quot;}}},&quot;scene&quot;:{&quot;xaxis&quot;:{&quot;visible&quot;:false},&quot;yaxis&quot;:{&quot;visible&quot;:false},&quot;zaxis&quot;:{&quot;visible&quot;:false},&quot;aspectmode&quot;:&quot;data&quot;,&quot;dragmode&quot;:&quot;turntable&quot;},&quot;margin&quot;:{&quot;l&quot;:0,&quot;r&quot;:0,&quot;t&quot;:40,&quot;b&quot;:0},&quot;title&quot;:{&quot;text&quot;:&quot;Autograd forces on ethanol (untrained, h=32, layers=3). |F|_max = 0.0189 \u00b7 arrows scaled by 20&quot;},&quot;height&quot;:480,&quot;dragmode&quot;:&quot;zoom&quot;}}' data-config='{}'></marimo-plotly>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ROlb",
+      "code_hash": "3d3915836400e136bd7b40a8ffbc99bb",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "### Translation invariance\n\nShifting all positions by `[1.2, -0.7, 2.4]` \u00c5:\n\n- `|E(shifted) \u2212 E(original)|` = `1.19e-07` \u2705 (should be ~0)\n\n### Force conservation (\u03a3 F \u2248 0)\n\n- original geometry: `||\u03a3 F_i||` = `2.63e-09` \u2705\n- shifted geometry:  `||\u03a3 F_i||` = `2.10e-09` \u2705\n\nBoth are at float32 roundoff. Translation invariance holds because the model only ever sees `pos[dst] \u2212 pos[src]` differences (recomputed inside each interaction layer). \u03a3 F = 0 then follows by Noether: translation symmetry \u21d4 conservation of total momentum."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "qnkX",
+      "code_hash": "acc6293aeba39e417c621d5b1f6395f3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "### Rotation behaviour\n\nRandom proper rotation `R` (orthogonal, det = +1) applied to every atom:\n\n- `|E(rotated) \u2212 E(original)|` = `0.00e+00` \u2705 (E is rotation-invariant)\n- `max_i ||F_rotated[i] \u2212 R @ F[i]||` = `2.00e-08` \u2705 (F is rotation-covariant)\n\nBoth at float32 roundoff."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "TqIu",
+      "code_hash": "80bb910ed6adf25f5cc266ee2bc91f11",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "The takeaway: the invariant model **is** fully rotation-symmetric. **E is\nrotation-invariant** and **F is rotation-covariant** \u2014 both fall out for\nfree because every layer only ever sees the scalar edge distance $r$,\nnever the edge direction. There is nothing wrong with this model under\nrotation.\n\nSo what does the equivariant model (notebook 05) actually add? Not\nsymmetry \u2014 **expressivity**. Vector channels on each atom let the model\nrepresent directional features *internally* (e.g. \"the bond axis from\nthis atom to its neighbour\") instead of immediately collapsing direction\nto a scalar at every step. That gives sharper forces and access to\nvector observables (dipoles, polarizabilities), but the invariant model\nis *not* broken under rotation."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Vxnm",
+      "code_hash": "3079b6c85b96ad18b1c7ee83a408c6c3",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "## Numerical gradient check\n\nIf `compute_forces` really computes $-\\nabla E$, then central differences\non the energy should agree with the autograd-derived force at the same\natom and axis. We pick an atom and an axis, perturb the position by\n$\\pm \\varepsilon$ \u00c5, and compare:\n\n$$\\text{numerical} = -\\,\\frac{E(\\mathbf{r} + \\varepsilon \\hat{\\mathbf{e}}_{i,\\alpha}) - E(\\mathbf{r} - \\varepsilon \\hat{\\mathbf{e}}_{i,\\alpha})}{2\\varepsilon}.$$\n\nWe use **float64** for both the model and the graph here \u2014 the\ncentral-difference truncation error is $O(\\varepsilon^2)$, so float32\nroundoff would dominate at $\\varepsilon = 10^{-3}$ \u00c5. (Central, not\nforward \u2014 the $O(\\varepsilon^2)$ truncation gives an extra digit of\nagreement for the same $\\varepsilon$ than a forward $O(\\varepsilon)$\ndifference would.) The same comparison runs in the test suite under\n`tests/test_forces.py`."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "DnEU",
+      "code_hash": "6a42c6a0e784cbec3eb70e505f23922c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "&lt;marimo-dropdown data-initial-value=&#x27;[&amp;quot;0&amp;quot;]&#x27; data-label=&#x27;&amp;quot;&amp;lt;span class=&amp;#92;&amp;quot;markdown prose dark:prose-invert contents&amp;#92;&amp;quot;&amp;gt;&amp;lt;span class=&amp;#92;&amp;quot;paragraph&amp;#92;&amp;quot;&amp;gt;atom index&amp;lt;/span&amp;gt;&amp;lt;/span&amp;gt;&amp;quot;&#x27; data-options=&#x27;[&amp;quot;0&amp;quot;,&amp;quot;1&amp;quot;,&amp;quot;2&amp;quot;,&amp;quot;3&amp;quot;,&amp;quot;4&amp;quot;,&amp;quot;5&amp;quot;,&amp;quot;6&amp;quot;,&amp;quot;7&amp;quot;,&amp;quot;8&amp;quot;]&#x27; data-allow-select-none=&#x27;false&#x27; data-searchable=&#x27;false&#x27; data-full-width=&#x27;false&#x27;&gt;&lt;/marimo-dropdown&gt;"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ulZA",
+      "code_hash": "50e28e94d3cf57b944f04ee1bf902b97",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "&lt;marimo-dropdown data-initial-value=&#x27;[&amp;quot;x&amp;quot;]&#x27; data-label=&#x27;&amp;quot;&amp;lt;span class=&amp;#92;&amp;quot;markdown prose dark:prose-invert contents&amp;#92;&amp;quot;&amp;gt;&amp;lt;span class=&amp;#92;&amp;quot;paragraph&amp;#92;&amp;quot;&amp;gt;axis&amp;lt;/span&amp;gt;&amp;lt;/span&amp;gt;&amp;quot;&#x27; data-options=&#x27;[&amp;quot;x&amp;quot;,&amp;quot;y&amp;quot;,&amp;quot;z&amp;quot;]&#x27; data-allow-select-none=&#x27;false&#x27; data-searchable=&#x27;false&#x27; data-full-width=&#x27;false&#x27;&gt;&lt;/marimo-dropdown&gt;"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "ecfG",
+      "code_hash": "dd31e2b6b448bf1ffd0d241b2dd35e5a",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "With `\u03b5 = 0.001` \u00c5, atom **0** (C), axis **x**:\n\n- autograd `F[0, x]`     = `-0.00527110`\n\n- numerical `\u2212(E\u208a \u2212 E\u208b)/(2\u03b5)` = `-0.00527108`\n\n- `|autograd \u2212 numerical|`     = `1.74e-08`\n\nThe gap is dominated by the central-difference truncation error `O(\u03b5\u00b2) \u2248 10\u207b\u2076`, not by autograd noise. **F = \u2212\u2207E** holds to machine precision, exactly as it should."
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Pvdt",
+      "code_hash": "40bea4804d4a363a2c31c38ec50bbaa1",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "## What we deferred (and where it goes)\n\nWe've built an end-to-end MLIP: embedding \u2192 message passing \u2192 readout \u2192\nsum \u2192 autograd forces. Three things on purpose did not show up here:\n\n- **Training.** The model in every cell above is *untrained* \u2014 its\n  forces are random but valid (conservative, translation-invariant,\n  rotation-covariant, summing to zero). Notebook 04 trains\n  `InvariantMPNN` on rMD17 with an energy + force-matching loss.\n- **Equivariant message passing.** The invariant model above is fully\n  rotation-symmetric \u2014 what notebook 05 changes is *expressivity*, not\n  symmetry. Each atom in `EquivariantMPNN` carries vector channels\n  alongside its scalar features. Vector channels let the model represent\n  directional features internally (bond axes, force directions) instead\n  of immediately collapsing direction to a scalar at every step \u2014\n  giving sharper forces and access to vector observables (dipoles).\n  Notebook 05 introduces `EquivariantMPNN` and compares it side-by-side\n  with `InvariantMPNN` on the same training run.\n- **Periodic systems.** Real materials live in periodic cells. Notebook\n  06 adds PBC support to the neighbor list and demos the model as an\n  ASE calculator on a small crystal."
+          }
+        }
+      ],
+      "console": []
+    }
+  ]
+}

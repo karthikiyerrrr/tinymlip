@@ -10,8 +10,5 @@ __pycache__/
 
 .superpowers/
 
-# marimo per-notebook session cache (auto-created next to the .py file)
-__marimo__/
-
 # generated EMT dataset (generated locally; not committed)
 data/cu_emt/
