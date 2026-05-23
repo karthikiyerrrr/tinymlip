@@ -29,7 +29,9 @@ The repo ships two models: an **invariant** message-passing model (based on SchN
 
 ### Reading the notebooks online
 
-GitHub's web preview shows these as flat Python scripts because they're [marimo](https://marimo.io/) `.py` files, not Jupyter `.ipynb`. To see the rendered notebook (cell outputs, plots, structure views) without cloning, click any **Online** link in the table above — they point to [molab](https://molab.marimo.io), marimo's first-party preview service. The URL pattern is `github.com/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>` → `molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>`. Append `/wasm` to any molab URL for a fully interactive in-browser session (loads Pyodide; slower first paint).
+GitHub's web preview shows these as flat Python scripts because they're [marimo](https://marimo.io/) `.py` files, not Jupyter `.ipynb`. To see the rendered notebook (cell outputs, plots, structure views) without cloning, click any **Online** link in the table above — they point to [molab](https://molab.marimo.io), marimo's first-party preview service. The URL pattern is `github.com/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>` → `molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>`.
+
+The preview is static: plots and code render, but interactive widgets (sliders, dropdowns) appear as raw HTML. molab's `/wasm` mode would bind them to a live in-browser Python kernel, except these notebooks depend on `torch_geometric`, `polars`, and `ase` — none of which run under Pyodide. For the interactive experience — moving sliders and watching the model react — clone the repo and run marimo locally per the instructions below. (A Jupyter `.ipynb` view wouldn't have offered live interactivity either; that's a property of any single-file notebook preview, not something marimo gives up.)
 
 The rendered outputs come from cached session snapshots committed under `notebooks/__marimo__/session/`. When notebook code changes, the snapshots are refreshed locally with `uv run marimo export session notebooks/` and committed alongside the `.py` edits.
 
