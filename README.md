@@ -18,14 +18,20 @@ The repo ships two models: an **invariant** message-passing model (based on SchN
 
 ## Notebooks
 
-| # | Notebook | What it covers |
-|---|----------|----------------|
-| 01 | `atoms_as_graphs.py` | Building a graph from an `Atoms` object; live cutoff slider with coupled 3D view and edge-distance histogram |
-| 02 | `message_passing.py` | Building a naive MPNN to a SchNet-style `InvariantInteraction` layer; reactive sliders for cutoff and `num_basis`; autograd-derived receptive-field heatmap |
-| 03 | `energy_and_forces.py` | Wrapping `InvariantInteraction` in `InvariantMPNN`; per-atom energy bar chart; force arrows from `torch.autograd.grad`; numerical-gradient check |
-| 04 | `training_invariant.py` | Training `InvariantMPNN` on rMD17 with batched disjoint-union graphs and an energy + force-matching loss; per-element reference shift, learning curves, parity plots, and predicted-vs-true force arrows |
-| 05 | `equivariant_model.py` | Motivates equivariance with a live rotation demo (forces rotate, scalars stay flat); dissects PaiNN's three message types (scalar, vector propagation, vector creation); trains `EquivariantMPNN` on rMD17 head-to-head against `InvariantMPNN` under identical hyperparameters and compares validation MAE |
-| 06 | `crystals_and_pbc.py` | Periodic boundary conditions, using the model as an ASE calculator |
+| # | Notebook | What it covers | Online |
+|---|----------|----------------|--------|
+| 01 | `atoms_as_graphs.py` | Building a graph from an `Atoms` object; live cutoff slider with coupled 3D view and edge-distance histogram | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/01_atoms_as_graphs.py) |
+| 02 | `message_passing.py` | Building a naive MPNN to a SchNet-style `InvariantInteraction` layer; reactive sliders for cutoff and `num_basis`; autograd-derived receptive-field heatmap | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/02_message_passing.py) |
+| 03 | `energy_and_forces.py` | Wrapping `InvariantInteraction` in `InvariantMPNN`; per-atom energy bar chart; force arrows from `torch.autograd.grad`; numerical-gradient check | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/03_energy_and_forces.py) |
+| 04 | `training_invariant.py` | Training `InvariantMPNN` on rMD17 with batched disjoint-union graphs and an energy + force-matching loss; per-element reference shift, learning curves, parity plots, and predicted-vs-true force arrows | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/04_training_invariant.py) |
+| 05 | `equivariant_model.py` | Motivates equivariance with a live rotation demo (forces rotate, scalars stay flat); dissects PaiNN's three message types (scalar, vector propagation, vector creation); trains `EquivariantMPNN` on rMD17 head-to-head against `InvariantMPNN` under identical hyperparameters and compares validation MAE | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/05_equivariant_model.py) |
+| 06 | `crystals_and_pbc.py` | Periodic boundary conditions, using the model as an ASE calculator | [open](https://molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/06_crystals_and_pbc.py) |
+
+### Reading the notebooks online
+
+GitHub's web preview shows these as flat Python scripts because they're [marimo](https://marimo.io/) `.py` files, not Jupyter `.ipynb`. To see the rendered notebook (cell outputs, plots, structure views) without cloning, click any **Online** link in the table above — they point to [molab](https://molab.marimo.io), marimo's first-party preview service. The URL pattern is `github.com/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>` → `molab.marimo.io/github/karthikiyerrrr/tinymlip/blob/main/notebooks/<file>`. Append `/wasm` to any molab URL for a fully interactive in-browser session (loads Pyodide; slower first paint).
+
+The rendered outputs come from cached session snapshots committed under `notebooks/__marimo__/session/`. When notebook code changes, the snapshots are refreshed locally with `uv run marimo export session notebooks/` and committed alongside the `.py` edits.
 
 Each notebook runs end-to-end in under 5 minutes on CPU at the default `tiny` config.
 
